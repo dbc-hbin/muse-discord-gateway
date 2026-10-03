@@ -2,6 +2,8 @@
 # Proactive outbound DM via Discord REST API (the gateway itself is inbound-only).
 # Usage: send-dm.sh --text "message" | --text-file /path/to/file
 # Reads the bot token from the 0600 token file; never prints it.
+# Destination is always the owner (DISCORD_OWNER_ID). The token is passed to
+# curl via a 0600 config file, never argv.
 set -u
 GW=/home/hatch/workspace/discord-gateway
 TOKEN_FILE="$GW/env/bot-token"
@@ -25,7 +27,15 @@ done
 [ -f "$TOKEN_FILE" ] || { echo "token file missing" >&2; exit 1; }
 
 TOKEN="$(cat "$TOKEN_FILE")"
-AUTH="Authorization: Bot $TOKEN"
+
+TMPD=$(mktemp -d)
+trap 'rm -rf "$TMPD"' EXIT
+
+# Token goes into a 0600 curl config file, never into argv (visible via ps).
+CURL_CONF="$TMPD/curl.conf"
+printf 'header = "Authorization: Bot %s"\nheader = "Content-Type: application/json"\n' "$TOKEN" > "$CURL_CONF"
+chmod 600 "$CURL_CONF"
+unset TOKEN
 
 channel_id() {
   if [ -f "$CHANNEL_CACHE" ]; then
@@ -34,7 +44,7 @@ channel_id() {
   fi
   local id
   id=$(curl -s --max-time 20 -X POST "https://discord.com/api/v10/users/@me/channels" \
-    -H "$AUTH" -H "Content-Type: application/json" \
+    -K "$CURL_CONF" \
     -d "{\"recipient_id\":\"$OWNER\"}" | jq -r '.id // empty')
   [ -n "$id" ] || { echo "dm channel creation failed" >&2; exit 1; }
   printf '%s' "$id" > "$CHANNEL_CACHE"
@@ -49,7 +59,7 @@ i=0
 while [ $i -lt ${#TEXT} ]; do
   chunk="${TEXT:$i:2000}"
   resp=$(curl -s --max-time 20 -X POST "https://discord.com/api/v10/channels/$CH/messages" \
-    -H "$AUTH" -H "Content-Type: application/json" \
+    -K "$CURL_CONF" \
     -d "$(jq -n --arg t "$chunk" '{content:$t}')")
   mid=$(echo "$resp" | jq -r '.id // empty')
   if [ -z "$mid" ]; then

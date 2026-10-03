@@ -2,6 +2,8 @@
 # Post a message to a Discord guild text channel via REST API.
 # Usage: send-channel.sh --channel <channel-id> --text "message" | --text-file /path/to/file
 # Reads the bot token from the 0600 token file; never prints it.
+# The channel must be listed in DISCORD_SEND_ALLOWLIST (gateway.env); anything
+# else is refused. The token is passed to curl via a 0600 config file, never argv.
 # Long text is split into <=1900-char chunks at newline boundaries.
 set -u
 GW=/home/hatch/workspace/discord-gateway
@@ -26,12 +28,25 @@ done
 [ -n "$TEXT" ] || { echo "empty text" >&2; exit 2; }
 [ -f "$TOKEN_FILE" ] || { echo "token file missing" >&2; exit 1; }
 
+# Destination allowlist: refuse any channel not explicitly approved, so this
+# script can never be pointed at an arbitrary channel the bot can access.
+allowed=0
+for a in ${DISCORD_SEND_ALLOWLIST:-}; do
+  [ "$a" = "$CHANNEL" ] && allowed=1
+done
+[ $allowed -eq 1 ] || { echo "channel $CHANNEL not in DISCORD_SEND_ALLOWLIST" >&2; exit 2; }
+
 TOKEN=$(cat "$TOKEN_FILE")
-AUTH="Authorization: Bot $TOKEN"
 PROXY="${BRIDGE_HTTPS_PROXY:-http://hatch-egress-proxy:3128}"
 
 TMPD=$(mktemp -d)
 trap 'rm -rf "$TMPD"' EXIT
+
+# Token goes into a 0600 curl config file, never into argv (visible via ps).
+CURL_CONF="$TMPD/curl.conf"
+printf 'header = "Authorization: Bot %s"\nheader = "Content-Type: application/json"\n' "$TOKEN" > "$CURL_CONF"
+chmod 600 "$CURL_CONF"
+unset TOKEN
 
 # Split text into chunks of at most 1900 chars, preferring newline boundaries.
 python3 - "$TEXT" "$TMPD" <<'EOF'
@@ -61,9 +76,9 @@ print(json.dumps({"content": body, "enforce_nonce": True, "nonce": sys.argv[2],
                   "allowed_mentions": {"parse": []}}))
 EOF
 )
-  out=$(curl -s --max-time 30 -x "$PROXY" -X POST \
+  out=$(curl -s --max-time 30 -x "$PROXY" -X POST -K "$CURL_CONF" \
     "https://discord.com/api/v10/channels/$CHANNEL/messages" \
-    -H "$AUTH" -H "Content-Type: application/json" -d "$resp")
+    -d "$resp")
   mid=$(printf '%s' "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
   if [ -z "$mid" ]; then
     echo "post failed: $(printf '%s' "$out" | head -c 300)" >&2
