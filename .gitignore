@@ -1,0 +1,14 @@
+# Secrets - never commit
+env/bot-token
+# Runtime state and logs
+state/
+logs/
+# Build artifacts (rebuild with Go 1.27.1, CGO_ENABLED=0)
+bin/dot-gateway
+bin/insane
+bin/headed-broker
+# Temp
+/tmp/
+*.tmp
+# insane-search runtime learning state
+src/insane-search-migration/data/
