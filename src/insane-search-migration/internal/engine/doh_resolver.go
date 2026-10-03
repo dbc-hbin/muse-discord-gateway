@@ -26,6 +26,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -37,6 +38,9 @@ import (
 type dohResolver struct {
 	endpoint string
 	client   *http.Client
+	// configErr is set when the endpoint is misconfigured (non-HTTPS,
+	// userinfo present, empty host). Lookups fail closed in that case.
+	configErr error
 }
 
 type dohAnswer struct {
@@ -45,20 +49,40 @@ type dohAnswer struct {
 }
 
 type dohResponse struct {
+	Status int         `json:"Status"`
+	TC     bool        `json:"TC"`
 	Answer []dohAnswer `json:"Answer"`
 }
 
+// maxDoHBodyBytes caps a single DNS-over-HTTPS JSON response. Legitimate
+// answers are a few KB; anything larger is rejected.
+const maxDoHBodyBytes = 1 << 20
+
 func newDOHResolver(endpoint string) *dohResolver {
-	return &dohResolver{
-		endpoint: endpoint,
-		client: &http.Client{
-			Timeout: 20 * time.Second,
-			Transport: &http.Transport{
-				Proxy:               http.ProxyFromEnvironment,
-				TLSHandshakeTimeout: 15 * time.Second,
-			},
+	r := &dohResolver{endpoint: endpoint}
+	if u, err := url.Parse(endpoint); err != nil {
+		r.configErr = fmt.Errorf("doh: bad endpoint: %w", err)
+	} else if u.Scheme != "https" {
+		r.configErr = fmt.Errorf("doh: endpoint must be https, got %q", u.Scheme)
+	} else if u.User != nil {
+		r.configErr = fmt.Errorf("doh: endpoint must not carry userinfo")
+	} else if u.Hostname() == "" {
+		r.configErr = fmt.Errorf("doh: endpoint has empty host")
+	}
+	r.client = &http.Client{
+		Timeout: 20 * time.Second,
+		Transport: &http.Transport{
+			Proxy:               http.ProxyFromEnvironment,
+			TLSHandshakeTimeout: 15 * time.Second,
+		},
+		// Never follow redirects: a compromised resolver must not be able
+		// to steer the client to an attacker-chosen address before the
+		// SSRF BlockedIP filter sees the answer IPs.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
 		},
 	}
+	return r
 }
 
 // dohEnabled reports whether the sandbox DNS adapter is active.
@@ -67,6 +91,9 @@ func dohEnabled() bool {
 }
 
 func (r *dohResolver) LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error) {
+	if r.configErr != nil {
+		return nil, r.configErr
+	}
 	var out []netip.Addr
 	for _, qtype := range []string{"A", "AAAA"} {
 		addrs, err := r.lookup(ctx, host, qtype)
@@ -104,8 +131,27 @@ func (r *dohResolver) lookup(ctx context.Context, host, qtype string) ([]netip.A
 		return nil, fmt.Errorf("doh: status %d", resp.StatusCode)
 	}
 	var dr dohResponse
-	if err := json.NewDecoder(resp.Body).Decode(&dr); err != nil {
+	// Bound memory first: read at most maxDoHBodyBytes+1 and reject anything
+	// that reaches the cap, so an oversized answer can never decode as a
+	// partial success.
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxDoHBodyBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("doh: read: %w", err)
+	}
+	if len(raw) > maxDoHBodyBytes {
+		return nil, fmt.Errorf("doh: response exceeds %d bytes", maxDoHBodyBytes)
+	}
+	if err := json.Unmarshal(raw, &dr); err != nil {
 		return nil, fmt.Errorf("doh: decode: %w", err)
+	}
+	// A non-NOERROR DNS status (e.g. SERVFAIL) or a truncated response is a
+	// lookup failure, not an empty success: fail closed instead of silently
+	// proceeding with partial answers.
+	if dr.Status != 0 {
+		return nil, fmt.Errorf("doh: dns status %d for %s", dr.Status, host)
+	}
+	if dr.TC {
+		return nil, fmt.Errorf("doh: truncated response for %s", host)
 	}
 	var out []netip.Addr
 	for _, a := range dr.Answer {
@@ -116,7 +162,19 @@ func (r *dohResolver) lookup(ctx context.Context, host, qtype string) ([]netip.A
 		if err != nil || !addr.IsValid() {
 			continue
 		}
-		out = append(out, addr.Unmap())
+		addr = addr.Unmap()
+		// The record type must match the address family actually parsed;
+		// reject IPv6 zones, which never belong in a DNS answer here.
+		if qtype == "A" && !addr.Is4() {
+			continue
+		}
+		if qtype == "AAAA" && !addr.Is6() {
+			continue
+		}
+		if addr.Zone() != "" {
+			continue
+		}
+		out = append(out, addr)
 	}
 	return out, nil
 }
