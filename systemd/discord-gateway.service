@@ -1,0 +1,20 @@
+[Unit]
+Description=Muse isolated Discord gateway (dot-gateway @ 6906628)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/hatch/workspace/discord-gateway
+EnvironmentFile=/home/hatch/workspace/discord-gateway/env/gateway.env
+# Set by the owner through a separately approved secure setup; absent until then.
+Environment=DISCORD_BOT_TOKEN_FILE=/home/hatch/workspace/discord-gateway/env/bot-token
+ExecStart=/home/hatch/workspace/discord-gateway/bin/dot-gateway gateway
+Restart=always
+RestartSec=15
+StandardOutput=append:/home/hatch/workspace/discord-gateway/logs/gateway.log
+StandardError=append:/home/hatch/workspace/discord-gateway/logs/gateway.log
+
+[Install]
+WantedBy=default.target
