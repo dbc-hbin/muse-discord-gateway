@@ -42,7 +42,7 @@ var passwordInput = regexp.MustCompile(`(?is)<input[^>]+type\s*=\s*["']?password
 func VisibleText(text string) string {
 	return strings.Join(strings.Fields(stripTags.ReplaceAllString(scripts.ReplaceAllString(text, " "), " ")), " ")
 }
-func WallVerdict(text string, status int) string {
+func WallVerdict(text string, status int, skipLoginForm bool) string {
 	low := strings.ToLower(text)
 	if status == 401 || status == 407 {
 		return "auth_required"
@@ -50,7 +50,12 @@ func WallVerdict(text string, status int) string {
 	if status == 402 {
 		return "paywall"
 	}
-	if passwordInput.MatchString(low) && strings.Contains(low, "<form") {
+	// A password input inside a form is not proof of a login wall when the
+	// caller knows the source renders public content next to a chrome login
+	// form (dcinside view pages always carry the header login widget while
+	// the post body stays public). The 401/407, paywall, and sign-in-phrase
+	// checks still apply when this is skipped.
+	if !skipLoginForm && passwordInput.MatchString(low) && strings.Contains(low, "<form") {
 		return "login_required"
 	}
 	visible := strings.ToLower(VisibleText(text))
@@ -68,7 +73,7 @@ func WallVerdict(text string, status int) string {
 	}
 	return ""
 }
-func Validate(resp HTTPResponse, selectors []string, knownBad []int) (r Validation) {
+func Validate(resp HTTPResponse, selectors []string, knownBad []int, skipLoginForm bool) (r Validation) {
 	defer func() {
 		if resp.Status >= 400 && r.OK() {
 			r.Verdict = "blocked"
@@ -101,7 +106,7 @@ func Validate(resp HTTPResponse, selectors []string, knownBad []int) (r Validati
 			return r
 		}
 	}
-	if wall := WallVerdict(text, resp.Status); wall != "" {
+	if wall := WallVerdict(text, resp.Status, skipLoginForm); wall != "" {
 		r.Verdict = wall
 		r.Reasons = append(r.Reasons, "terminal_public_content_wall")
 		return r
