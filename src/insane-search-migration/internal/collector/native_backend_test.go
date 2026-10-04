@@ -89,3 +89,26 @@ func TestDCInsideCanonicalIdentityIsNarrowAndStable(t *testing.T) {
 		t.Fatal("legacy behavior changed", got)
 	}
 }
+func TestDCMobileViewURLRewrite(t *testing.T) {
+	for _, tc := range []struct {
+		raw, want string
+		ok        bool
+	}{
+		{"https://gall.dcinside.com/mgallery/board/view/?id=ai_utilize&no=101967", "https://m.dcinside.com/board/ai_utilize/101967", true},
+		{"https://gall.dcinside.com/mgallery/board/view?id=ai_utilize&no=101967", "https://m.dcinside.com/board/ai_utilize/101967", true},
+		{"https://m.dcinside.com/board/ai_utilize/101967", "https://m.dcinside.com/board/ai_utilize/101967", true},
+		{"https://gall.dcinside.com/mgallery/board/view/?id=other&no=101967", "", false},
+		{"https://gall.dcinside.com/mgallery/board/view/?id=ai_utilize&no=abc", "", false},
+		{"https://gall.dcinside.com/mgallery/board/lists/?id=ai_utilize&no=101967", "", false},
+		{"https://gall.dcinside.com.evil.example/mgallery/board/view/?id=ai_utilize&no=101967", "", false},
+		{"https://user:secret@gall.dcinside.com/mgallery/board/view/?id=ai_utilize&no=101967", "", false},
+		{"https://m.dcinside.com/board/ai_utilize/abc", "", false},
+		{"https://m.dcinside.com/board/other/101967", "", false},
+		{"https://m.dcinside.com.evil.example/board/ai_utilize/101967", "", false},
+	} {
+		got, ok := dcMobileViewURL(tc.raw)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("%s => (%q, %v), want (%q, %v)", tc.raw, got, ok, tc.want, tc.ok)
+		}
+	}
+}

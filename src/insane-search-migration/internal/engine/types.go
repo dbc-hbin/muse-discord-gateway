@@ -15,6 +15,12 @@ type Request struct {
 	AcceptEmptyJSONArray                                                                          bool
 	KnownBadSizes                                                                                 []int
 	EnableBrowser, EnablePhase0, EnableExtraction, EnableRetry, EnableMarkdown, EnableMainContent bool
+	// SkipLoginFormWall disables only the password-input login-form wall
+	// heuristic. Use it when a source's pages demonstrably render public
+	// content next to a site-chrome login form (dcinside view pages always
+	// carry the header login widget even though the post body is public).
+	// HTTP 401/407, paywalls, and the sign-in-phrase checks still apply.
+	SkipLoginFormWall bool
 }
 
 func DefaultRequest(url string) Request {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,22 @@ func (b *NativeBackend) fetch(ctx context.Context, raw string, markdown bool, ac
 	return text, failure, verdict, err
 }
 func (b *NativeBackend) fetchWithFinalURL(ctx context.Context, raw string, markdown bool, acceptEmpty ...bool) (string, string, string, string, error) {
+	return b.fetchWithOptions(ctx, raw, markdown, fetchOptions{}, acceptEmpty...)
+}
+
+// fetchOptions tunes a fetch for sources whose public pages need a specific
+// device view or a wall-heuristic exemption.
+type fetchOptions struct {
+	// device overrides the engine DeviceClass ("mobile" selects the iOS
+	// Safari TLS profile and a mobile user agent).
+	device string
+	// skipLoginFormWall disables only the password-input login-form wall
+	// heuristic for pages that demonstrably render public content next to
+	// a site-chrome login form.
+	skipLoginFormWall bool
+}
+
+func (b *NativeBackend) fetchWithOptions(ctx context.Context, raw string, markdown bool, opts fetchOptions, acceptEmpty ...bool) (string, string, string, string, error) {
 	if b.OperationTimeout <= 0 {
 		return "", "", "", "", fmt.Errorf("operation timeout must be positive")
 	}
@@ -62,6 +79,10 @@ func (b *NativeBackend) fetchWithFinalURL(ctx context.Context, raw string, markd
 	request.AcceptEmptyJSONArray = len(acceptEmpty) > 0 && acceptEmpty[0]
 	request.EnableMarkdown = markdown
 	request.EnableMainContent = markdown
+	if opts.device != "" {
+		request.DeviceClass = opts.device
+	}
+	request.SkipLoginFormWall = opts.skipLoginFormWall
 	result, e := b.Fetcher.Fetch(ctx, request)
 	if e != nil {
 		return "", "", "", "", e
@@ -204,6 +225,32 @@ func (b *NativeBackend) Listing(ctx context.Context, source Source) ([]Row, stri
 	}
 	return rows, "", nil
 }
+var dcPostNo = regexp.MustCompile(`^[0-9]{1,20}$`)
+
+// dcMobileViewURL rewrites an observed DCInside post URL to the mobile view
+// URL, which renders the post body publicly without login. Only the exact
+// allowlisted routes are rewritten; anything else is rejected so the caller
+// can keep its previous behavior.
+func dcMobileViewURL(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.User != nil || (u.Scheme != "https" && u.Scheme != "http") {
+		return "", false
+	}
+	if strings.EqualFold(u.Host, "gall.dcinside.com") && strings.TrimRight(u.Path, "/") == "/mgallery/board/view" {
+		q, qErr := url.ParseQuery(u.RawQuery)
+		if qErr == nil && len(q["id"]) == 1 && q.Get("id") == "ai_utilize" && len(q["no"]) == 1 && dcPostNo.MatchString(q.Get("no")) {
+			return "https://m.dcinside.com/board/ai_utilize/" + q.Get("no"), true
+		}
+		return "", false
+	}
+	if strings.EqualFold(u.Host, "m.dcinside.com") {
+		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(parts) == 3 && parts[0] == "board" && parts[1] == "ai_utilize" && dcPostNo.MatchString(parts[2]) {
+			return "https://m.dcinside.com/board/ai_utilize/" + parts[2], true
+		}
+	}
+	return "", false
+}
 func (b *NativeBackend) Body(ctx context.Context, row Row) (string, string, error) {
 	source, raw := row.Source, row.URL
 	clean := func(s string) string { return StripPoison(extract.CleanText(s)) }
@@ -301,6 +348,22 @@ func (b *NativeBackend) Body(ctx context.Context, row Row) (string, string, erro
 			reason = htmlError
 		}
 		return clean(fallback), reason, e
+	}
+	if strings.HasPrefix(source, "dcinside") {
+		// DCInside post bodies are public on the mobile view without login.
+		// Fetch the mobile URL with a mobile device class and skip only the
+		// password-input wall heuristic: view pages always carry the site's
+		// header login widget even though the post body is public.
+		if mobile, ok := dcMobileViewURL(raw); ok {
+			text, reason, _, _, e := b.fetchWithOptions(ctx, mobile, false, fetchOptions{device: "mobile", skipLoginFormWall: true})
+			if text != "" {
+				return StripPoison(extract.DCInsideDescription(text)), reason, e
+			}
+			if e != nil {
+				return "", "", e
+			}
+			return "", reason, nil
+		}
 	}
 	text, reason, _, e := b.fetch(ctx, raw, false)
 	if text != "" && strings.HasPrefix(source, "dcinside") {

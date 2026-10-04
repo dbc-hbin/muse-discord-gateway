@@ -154,17 +154,26 @@ func TestValidatorCoreAndSafetyStops(t *testing.T) {
 	for _, c := range cases {
 		headers := make(http.Header)
 		headers.Set("Content-Type", c.ctype)
-		got := Validate(HTTPResponse{Status: c.status, Body: []byte(c.body), Headers: headers}, nil, nil)
+		got := Validate(HTTPResponse{Status: c.status, Body: []byte(c.body), Headers: headers}, nil, nil, false)
 		if got.Verdict != c.want {
 			t.Errorf("%+v got %s", c, got.Verdict)
 		}
 	}
 	resp := HTTPResponse{Status: 200, Body: []byte(`<main id="article">captcha is mentioned in ordinary prose</main>`), Headers: http.Header{}}
-	if got := Validate(resp, []string{"#article"}, nil); got.Verdict != "strong_ok" {
+	if got := Validate(resp, []string{"#article"}, nil, false); got.Verdict != "strong_ok" {
 		t.Fatal(got)
 	}
+	// A chrome login form next to public content is not a login wall when the
+	// caller opts out of the password-form heuristic (dcinside mobile views).
+	loginForm := `<html><body><form><input type="password"></form>` + strings.Repeat("public post content ", 200) + `</body></html>`
+	if got := Validate(HTTPResponse{Status: 200, Body: []byte(loginForm), Headers: http.Header{}}, nil, nil, true); got.Verdict == "login_required" {
+		t.Errorf("skipLoginForm login form page got login_required")
+	}
+	if got := Validate(HTTPResponse{Status: 200, Body: []byte(loginForm), Headers: http.Header{}}, nil, nil, false); got.Verdict != "login_required" {
+		t.Errorf("default login form page got %s, want login_required", got.Verdict)
+	}
 	resp.Cookies = []*http.Cookie{{Name: "_abck", Value: "x~-1~x"}}
-	if got := Validate(resp, []string{"#article"}, nil); got.Verdict != "suspect_ok" {
+	if got := Validate(resp, []string{"#article"}, nil, false); got.Verdict != "suspect_ok" {
 		t.Fatal(got)
 	}
 }
@@ -478,7 +487,7 @@ func TestImmutablePythonEngineGoldens(t *testing.T) {
 		for k, v := range row.Cookies {
 			response.Cookies = append(response.Cookies, &http.Cookie{Name: k, Value: v})
 		}
-		got := Validate(response, row.Selectors, row.KnownBad)
+		got := Validate(response, row.Selectors, row.KnownBad, false)
 		if row.Difference != "" {
 			if got.Verdict != row.NativeVerdict {
 				t.Errorf("documented safety case %d: got %s want %s", i, got.Verdict, row.NativeVerdict)

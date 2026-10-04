@@ -371,7 +371,7 @@ func (f *Fetcher) success(result Result, r Request, response HTTPResponse, c Can
 }
 
 func validateRequestResponse(response HTTPResponse, request Request, knownBad []int) Validation {
-	result := Validate(response, request.SuccessSelectors, knownBad)
+	result := Validate(response, request.SuccessSelectors, knownBad, request.SkipLoginFormWall)
 	if request.AcceptEmptyJSONArray && response.Status >= 200 && response.Status < 300 && !isWall(result.Verdict) {
 		var values []any
 		raw := extract.UnwrapJSON(string(response.Body))
