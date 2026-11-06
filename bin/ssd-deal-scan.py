@@ -79,14 +79,30 @@ def parse_price_krw(text: str):
 
 
 def parse_capacity_gb(title: str):
-    t = title.lower().replace(" ", "")
-    m = re.search(r"(\d+(?:\.\d+)?)tb", t)
-    if m:
-        return int(float(m.group(1)) * 1000)
-    m = re.search(r"(\d+)gb", t)
-    if m:
-        return int(m.group(1))
-    return None
+    """Extract capacity in GB, or None if ambiguous / implausible.
+
+    Multi-variant AliExpress titles list several capacities
+    ("1TB 2TB 500GB 250GB") and the scraped price belongs to an unknown
+    variant, so any single capacity would be misleading. Matching is
+    done on the original spacing with word boundaries: the old
+    space-stripping merged the "M.2" form factor with the next capacity
+    ("M.2 1TB" -> "m21tb" -> 21000 GB, "M.2 2TB" -> 22000 GB).
+    A single capacity above 8TB is treated as implausible -> None.
+    """
+    if not title:
+        return None
+    t = title.lower()
+    caps = set()
+    for m in re.finditer(r"(\d+(?:\.\d+)?)\s*tb\b", t):
+        caps.add(int(float(m.group(1)) * 1000))
+    for m in re.finditer(r"(\d+)\s*gb\b", t):
+        caps.add(int(m.group(1)))
+    if len(caps) != 1:
+        return None
+    cap = caps.pop()
+    if cap <= 0 or cap > 8000:
+        return None
+    return cap
 
 
 # --- brand / warranty quality filter (owner request 2026-10-04) ---
