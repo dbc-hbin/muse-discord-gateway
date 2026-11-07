@@ -27,6 +27,10 @@
     [
       "nodeloc-latest",
       "https://www.nodeloc.com/latest.json"
+    ],
+    [
+      "csdn-home",
+      "https://blog.csdn.net/"
     ]
   ],
   "GENERIC_AI_TERMS": [
