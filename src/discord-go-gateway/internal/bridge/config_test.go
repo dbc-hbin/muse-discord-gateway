@@ -57,10 +57,40 @@ func TestPolicyExtraGuild(t *testing.T) {
 	if p.Allows(other) {
 		t.Fatal("extra guild wrong channel allowed")
 	}
-	other = e
-	other.SenderID = "4"
-	if p.Allows(other) {
-		t.Fatal("extra guild non-owner allowed")
+	// The extra route is public (owner request 2026-11-08): any human who
+	// mentions the bot there is allowed, under their own sender ID.
+	stranger := e
+	stranger.SenderID = "42"
+	if !p.Allows(stranger) || !p.Accepts(stranger) {
+		t.Fatal("extra guild stranger mention denied")
+	}
+	noMention := stranger
+	noMention.BotMentioned = false
+	if p.Allows(noMention) {
+		t.Fatal("extra guild stranger without mention allowed")
+	}
+	botSender := stranger
+	botSender.SenderIsBot = true
+	if p.Allows(botSender) {
+		t.Fatal("extra guild bot sender allowed")
+	}
+	// Strangers stay locked out of every other route.
+	dm := testEnvelope()
+	dm.SenderID = "42"
+	if p.Allows(dm) {
+		t.Fatal("stranger DM allowed")
+	}
+	primaryStranger := stranger
+	primaryStranger.GuildID, primaryStranger.ConversationID = "5", "2"
+	if p.Allows(primaryStranger) {
+		t.Fatal("stranger on primary guild allowed")
+	}
+	// Control envelopes stay owner-only even on the public route.
+	ctrl := stranger
+	ctrl.ReplyKind = "interaction"
+	ctrl.Control = encodeControl(ControlEvent{Version: 1, Kind: "ask", ID: "c1", ActorID: "42", InteractionID: "3"})
+	if p.Allows(ctrl) {
+		t.Fatal("stranger control on extra guild allowed")
 	}
 	thread := e
 	thread.RouteKind = "guild_thread"
