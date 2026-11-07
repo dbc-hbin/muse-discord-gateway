@@ -52,6 +52,19 @@ func TestHTMLListingAndDescription(t *testing.T) {
 		t.Fatal("empty existing OG must win", got)
 	}
 }
+func TestCSDNListing(t *testing.T) {
+	body := `<a href="https://blog.csdn.net/someuser/article/details/170188236">Claude 免费 额度 领取</a>` +
+		`<a href="https://blog.csdn.net/other/article/details/123">짧</a>` +
+		`<a href="https://download.csdn.net/download/x/12345">not a blog article link</a>` +
+		`<a href="https://blog.csdn.net/nav">no article path</a>`
+	rows, diag := ParseListing("csdn-home", "https://www.csdn.net/", body)
+	if !diag.Recognized || diag.Format != "html" || len(rows) != 1 {
+		t.Fatalf("%+v %+v", rows, diag)
+	}
+	if rows[0].Title != "Claude 免费 额度 领取" || rows[0].URL != "https://blog.csdn.net/someuser/article/details/170188236" {
+		t.Fatalf("%+v", rows[0])
+	}
+}
 func TestDCInsideObservedDesktopRedirectListing(t *testing.T) {
 	data, err := os.ReadFile("testdata/dcinside_desktop_observed.html")
 	if err != nil {

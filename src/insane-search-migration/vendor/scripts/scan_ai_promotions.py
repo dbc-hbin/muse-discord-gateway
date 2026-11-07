@@ -40,6 +40,7 @@ SOURCES = (
     ("v2ex-hot", "https://www.v2ex.com/api/topics/hot.json"),
     ("nodeloc-deals", "https://www.nodeloc.com/c/business/information/10.json"),
     ("nodeloc-latest", "https://www.nodeloc.com/latest.json"),
+    ("csdn-home", "https://blog.csdn.net/"),
 )
 
 # Generic vocabulary cannot establish AI relevance by itself.
@@ -303,6 +304,10 @@ def parse_html_listing(source: str, url: str, text: str) -> list[dict[str, str]]
             valid = bool(re.search(r"/board/ai_utilize/\d+", path))
         elif source.startswith("v2ex"):
             valid = bool(re.search(r"/t/\d+", path))
+        elif source.startswith("csdn"):
+            valid = urlsplit(absolute).hostname == "blog.csdn.net" and bool(
+                re.search(r"/article/details/\d+", path)
+            )
         else:
             valid = bool(re.search(r"/t/(?:[^/]+/)?\d+", path))
         title = clean_text(anchor.get_text(" ", strip=True) or str(anchor.get("title") or ""))

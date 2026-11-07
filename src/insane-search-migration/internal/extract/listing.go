@@ -27,6 +27,7 @@ type ListingDiagnostics struct {
 var topicPath = regexp.MustCompile("/t/(?:[^/]+/)?([0-9]+)")
 var dcPath = regexp.MustCompile("/board/ai_utilize/([0-9]+)")
 var v2Path = regexp.MustCompile("/t/[0-9]+")
+var csdnPath = regexp.MustCompile("/article/details/([0-9]+)")
 var decimalID = regexp.MustCompile("^[0-9]{1,20}$")
 var dcPrefix = regexp.MustCompile("^(?:이미지|영상|설문|공지)[\\s\\x{0085}\\x{00a0}]+")
 var dcSuffix = regexp.MustCompile("\\s+(?:일반|질문|정보|뉴스|후기|공지)\\s+.*?\\s+[0-9]{1,2}:[0-9]{2}\\s+조회\\s+[0-9]+\\s+추천\\s+[0-9]+.*$")
@@ -207,6 +208,11 @@ func ParseHTMLListing(source, base, text string) []Row {
 			}
 		} else if strings.HasPrefix(source, "v2ex") {
 			valid = v2Path.MatchString(u.Path)
+		} else if strings.HasPrefix(source, "csdn") {
+			// CSDN's server-rendered homepage links out to blog articles;
+			// only those article URLs are listing rows (nav/download links
+			// on other csdn.net hosts are not).
+			valid = strings.EqualFold(u.Host, "blog.csdn.net") && csdnPath.MatchString(u.Path)
 		}
 		title := Text(n)
 		if title == "" {
