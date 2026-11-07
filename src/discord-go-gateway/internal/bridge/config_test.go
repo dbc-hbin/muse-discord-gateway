@@ -37,6 +37,68 @@ func TestPolicy(t *testing.T) {
 		t.Fatal("mention denied")
 	}
 }
+func TestPolicyExtraGuild(t *testing.T) {
+	// Primary guild in "all" mode (message content approved), extra guild
+	// must stay mention-only.
+	p := Policy{OwnerID: "1", AllowedDMIDs: []string{"1"}, Platform: "discord", GuildID: "5", GuildChannelID: "2", GuildMode: "all", MessageContentApproved: true, ExtraGuildID: "6", ExtraGuildChannelID: "7"}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	e := Envelope{Platform: "discord", EventID: "3", ConversationID: "7", SenderID: "1", Text: "hi", RouteKind: "guild_text", GuildID: "6"}
+	if p.Allows(e) {
+		t.Fatal("extra guild without mention allowed")
+	}
+	e.BotMentioned = true
+	if !p.Allows(e) {
+		t.Fatal("extra guild mention denied")
+	}
+	other := e
+	other.ConversationID = "9"
+	if p.Allows(other) {
+		t.Fatal("extra guild wrong channel allowed")
+	}
+	other = e
+	other.SenderID = "4"
+	if p.Allows(other) {
+		t.Fatal("extra guild non-owner allowed")
+	}
+	thread := e
+	thread.RouteKind = "guild_thread"
+	thread.ParentChannelID = "7"
+	thread.ThreadType = 11
+	if p.Allows(thread) {
+		t.Fatal("extra guild thread allowed")
+	}
+	// Primary route unchanged: "all" mode needs no mention.
+	primary := Envelope{Platform: "discord", EventID: "3", ConversationID: "2", SenderID: "1", Text: "hi", RouteKind: "guild_text", GuildID: "5"}
+	if !p.Allows(primary) {
+		t.Fatal("primary guild all-mode denied")
+	}
+	// Invalid extra scopes must fail validation.
+	for _, mut := range []func(*Policy){
+		func(p *Policy) { p.ExtraGuildChannelID = "" },
+		func(p *Policy) { p.ExtraGuildID = "" },
+		func(p *Policy) { p.ExtraGuildID = "5" },
+		func(p *Policy) { p.ExtraGuildChannelID = "2" },
+		func(p *Policy) { p.ExtraGuildID = "x" },
+		func(p *Policy) { p.GuildID, p.GuildChannelID = "", "" },
+	} {
+		v := p
+		mut(&v)
+		if err := v.Validate(); err == nil {
+			t.Fatal("invalid extra guild scope accepted")
+		}
+	}
+	// Env parsing wires the extra route through.
+	env := map[string]string{"DISCORD_OWNER_ID": "1", "DISCORD_ALLOWED_DM_IDS": "1", "DISCORD_GUILD_ID": "5", "DISCORD_GUILD_CHANNEL_ID": "2", "DISCORD_GUILD_MODE": "all", "DISCORD_ENABLE_MESSAGE_CONTENT": "true", "DISCORD_EXTRA_GUILD_ID": "6", "DISCORD_EXTRA_GUILD_CHANNEL_ID": "7"}
+	s, err := SettingsFromEnv(env, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Policy.ExtraGuildID != "6" || s.Policy.ExtraGuildChannelID != "7" {
+		t.Fatal("extra guild env not parsed")
+	}
+}
 func TestSnowflake(t *testing.T) {
 	for _, s := range []string{"0", "01", "18446744073709551616", "-1", "1\n"} {
 		if Snowflake(s) {

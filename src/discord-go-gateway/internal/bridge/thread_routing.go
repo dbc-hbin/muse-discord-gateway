@@ -53,6 +53,16 @@ func guildRoutePermissions(s *discordgo.Session, c Settings, e Envelope) bool {
 	if e.RouteKind == "dm" {
 		return true
 	}
+	// The extra mention-only guild route checks permissions on its own
+	// channel; the primary guild's permissions say nothing about it.
+	if c.Policy.ExtraGuildID != "" && e.GuildID == c.Policy.ExtraGuildID {
+		if e.RouteKind != "guild_text" {
+			return false
+		}
+		p, err := s.State.UserChannelPermissions(c.ExpectedBotID, c.Policy.ExtraGuildChannelID)
+		need := int64(discordgo.PermissionSendMessages)
+		return err == nil && (p&discordgo.PermissionAdministrator != 0 || p&need == need)
+	}
 	if c.Policy.GuildID == "" || !guildPermissions(s, c) {
 		return false
 	}
