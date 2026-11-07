@@ -158,7 +158,7 @@ func run(args []string) int {
 		if settings.Policy.GuildID != "" {
 			scope = "owner_dm_and_pinned_guild_channel_and_verified_child_threads"
 		}
-		output(map[string]any{"configuration": "valid", "scope": scope, "guild_id": nullable(settings.Policy.GuildID), "guild_channel_id": nullable(settings.Policy.GuildChannelID), "guild_mode": nullable(settings.Policy.GuildMode), "message_content_intent": settings.Policy.MessageContentApproved, "discord_transport": transport, "token_checked": false, "network_used": false})
+		output(map[string]any{"configuration": "valid", "scope": scope, "guild_id": nullable(settings.Policy.GuildID), "guild_channel_id": nullable(settings.Policy.GuildChannelID), "guild_mode": nullable(settings.Policy.GuildMode), "extra_guild_id": nullable(settings.Policy.ExtraGuildID), "extra_guild_channel_id": nullable(settings.Policy.ExtraGuildChannelID), "extra_guild_mode": "mention", "message_content_intent": settings.Policy.MessageContentApproved, "discord_transport": transport, "token_checked": false, "network_used": false})
 		return 0
 	}
 	if cmd == "register-commands" && f["fetch"] != "true" && f["apply-reviewed"] != "true" {

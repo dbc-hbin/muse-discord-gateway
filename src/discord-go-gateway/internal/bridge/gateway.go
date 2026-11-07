@@ -399,17 +399,17 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		}
 	}
 	s.AddHandler(func(_ *discordgo.Session, m *discordgo.MessageUpdate) {
-		if m.Message != nil && (m.GuildID == "" || m.GuildID == settings.Policy.GuildID) {
+		if m.Message != nil && (m.GuildID == "" || m.GuildID == settings.Policy.GuildID || m.GuildID == settings.Policy.ExtraGuildID) {
 			enqueueSource(sourceGatewayEvent{Update: m.Message})
 		}
 	})
 	s.AddHandler(func(_ *discordgo.Session, m *discordgo.MessageDelete) {
-		if m.Message != nil && (m.GuildID == "" || m.GuildID == settings.Policy.GuildID) {
+		if m.Message != nil && (m.GuildID == "" || m.GuildID == settings.Policy.GuildID || m.GuildID == settings.Policy.ExtraGuildID) {
 			enqueueSource(sourceGatewayEvent{Delete: m.Message})
 		}
 	})
 	s.AddHandler(func(_ *discordgo.Session, m *discordgo.MessageDeleteBulk) {
-		if m.GuildID != "" && m.GuildID != settings.Policy.GuildID {
+		if m.GuildID != "" && m.GuildID != settings.Policy.GuildID && m.GuildID != settings.Policy.ExtraGuildID {
 			return
 		}
 		for _, id := range m.Messages {
@@ -749,7 +749,7 @@ func openGateway(ctx context.Context, s *discordgo.Session, d *gatewayDialer) er
 }
 
 func receiveMessage(ctx context.Context, rest *RESTClient, store *Store, s Settings, m *discordgo.Message) (string, error) {
-	if m == nil || m.Author == nil || m.Author.ID != s.Policy.OwnerID || m.Author.Bot || m.WebhookID != "" || (m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply) || (m.GuildID != "" && m.GuildID != s.Policy.GuildID) {
+	if m == nil || m.Author == nil || m.Author.ID != s.Policy.OwnerID || m.Author.Bot || m.WebhookID != "" || (m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply) || (m.GuildID != "" && m.GuildID != s.Policy.GuildID && m.GuildID != s.Policy.ExtraGuildID) {
 		return "rejected", nil
 	}
 	event := projectGatewayMessage(s, m)
@@ -765,7 +765,7 @@ func projectGatewayMessage(s Settings, m *discordgo.Message) Envelope {
 	event := Envelope{Media: ProjectMedia(m), ContentHash: MessageContentFingerprint(m), Context: projectMessageContext(m), Platform: "discord", EventID: m.ID, ConversationID: m.ChannelID, SenderID: m.Author.ID, Text: m.Content, ReceivedAt: wall(), RouteKind: "dm", GuildID: m.GuildID, SenderIsBot: m.Author.Bot}
 	if m.GuildID != "" {
 		event.RouteKind = "guild_text"
-		if m.ChannelID != s.Policy.GuildChannelID {
+		if m.ChannelID != s.Policy.GuildChannelID && m.ChannelID != s.Policy.ExtraGuildChannelID {
 			event.RouteKind = "guild_thread_candidate"
 		}
 	}

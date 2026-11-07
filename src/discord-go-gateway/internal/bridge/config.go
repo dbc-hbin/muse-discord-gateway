@@ -32,6 +32,12 @@ type Policy struct {
 	GuildChannelID         string
 	GuildMode              string
 	MessageContentApproved bool
+	// ExtraGuildID/ExtraGuildChannelID optionally designate one additional
+	// guild channel. That route is always mention-only, regardless of the
+	// primary guild mode: the bot answers there only when tagged. Threads
+	// and slash commands are not supported on the extra route.
+	ExtraGuildID        string
+	ExtraGuildChannelID string
 }
 
 func (p Policy) Validate() error {
@@ -47,7 +53,15 @@ func (p Policy) Validate() error {
 	if p.GuildMode == "all" && (p.GuildID == "" || !p.MessageContentApproved) || p.MessageContentApproved && (p.GuildID == "" || p.GuildMode != "all") {
 		return errors.New("invalid_message_content_intent")
 	}
+	if (p.ExtraGuildID == "") != (p.ExtraGuildChannelID == "") || p.ExtraGuildID != "" && (!Snowflake(p.ExtraGuildID) || !Snowflake(p.ExtraGuildChannelID) || p.GuildID == "" || p.ExtraGuildID == p.GuildID || p.ExtraGuildChannelID == p.GuildChannelID) {
+		return errors.New("invalid_extra_guild_scope")
+	}
 	return nil
+}
+
+// extraGuild reports whether e hits the additional mention-only guild route.
+func (p Policy) extraGuild(e Envelope) bool {
+	return p.ExtraGuildID != "" && e.GuildID == p.ExtraGuildID && e.ConversationID == p.ExtraGuildChannelID && e.BotMentioned
 }
 func (p Policy) Allows(e Envelope) bool {
 	platform := p.Platform
@@ -56,7 +70,7 @@ func (p Policy) Allows(e Envelope) bool {
 	}
 	plain := e.ParentChannelID == "" && e.ThreadType == 0 && e.ThreadName == ""
 	guild := p.GuildID != "" && e.GuildID == p.GuildID && (p.GuildMode == "all" || e.BotMentioned)
-	route := plain && (e.RouteKind == "dm" && e.GuildID == "" || e.RouteKind == "guild_text" && guild && e.ConversationID == p.GuildChannelID) ||
+	route := plain && (e.RouteKind == "dm" && e.GuildID == "" || e.RouteKind == "guild_text" && guild && e.ConversationID == p.GuildChannelID || e.RouteKind == "guild_text" && p.extraGuild(e)) ||
 		e.RouteKind == "guild_thread" && guild && e.ConversationID != p.GuildChannelID && e.ParentChannelID == p.GuildChannelID && (e.ThreadType == 11 || e.ThreadType == 12)
 	return (e.Control == "" || validControl(e)) && p.Validate() == nil && e.Platform == platform && route && !e.SenderIsBot && e.SenderID == p.OwnerID && Snowflake(e.ConversationID) && Snowflake(e.EventID)
 }
@@ -123,7 +137,7 @@ func SettingsFromEnv(env map[string]string, live, validateProxy bool) (Settings,
 			}
 		}
 	}
-	s.Policy = Policy{OwnerID: get("DISCORD_OWNER_ID", ""), Platform: "discord", GuildID: get("DISCORD_GUILD_ID", ""), GuildChannelID: get("DISCORD_GUILD_CHANNEL_ID", ""), GuildMode: get("DISCORD_GUILD_MODE", "mention")}
+	s.Policy = Policy{OwnerID: get("DISCORD_OWNER_ID", ""), Platform: "discord", GuildID: get("DISCORD_GUILD_ID", ""), GuildChannelID: get("DISCORD_GUILD_CHANNEL_ID", ""), GuildMode: get("DISCORD_GUILD_MODE", "mention"), ExtraGuildID: get("DISCORD_EXTRA_GUILD_ID", ""), ExtraGuildChannelID: get("DISCORD_EXTRA_GUILD_CHANNEL_ID", "")}
 	seen := map[string]bool{}
 	for _, v := range strings.Split(get("DISCORD_ALLOWED_DM_IDS", ""), ",") {
 		v = strings.TrimSpace(v)
