@@ -374,7 +374,13 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		}
 	})
 	s.AddHandler(func(_ *discordgo.Session, m *discordgo.MessageCreate) {
-		if m.Message == nil || m.Author == nil || m.Author.ID != settings.Policy.OwnerID || m.Author.Bot || m.WebhookID != "" {
+		if m.Message == nil || m.Author == nil || m.Author.Bot || m.WebhookID != "" {
+			return
+		}
+		// Owner everywhere; the public extra guild channel additionally
+		// passes any human author through to policy staging, which still
+		// requires a bot mention there before anything is queued.
+		if m.Author.ID != settings.Policy.OwnerID && !(settings.Policy.ExtraGuildID != "" && m.GuildID == settings.Policy.ExtraGuildID && m.ChannelID == settings.Policy.ExtraGuildChannelID) {
 			return
 		}
 		if m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply {
@@ -749,7 +755,8 @@ func openGateway(ctx context.Context, s *discordgo.Session, d *gatewayDialer) er
 }
 
 func receiveMessage(ctx context.Context, rest *RESTClient, store *Store, s Settings, m *discordgo.Message) (string, error) {
-	if m == nil || m.Author == nil || m.Author.ID != s.Policy.OwnerID || m.Author.Bot || m.WebhookID != "" || (m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply) || (m.GuildID != "" && m.GuildID != s.Policy.GuildID && m.GuildID != s.Policy.ExtraGuildID) {
+	authorOK := m != nil && m.Author != nil && (m.Author.ID == s.Policy.OwnerID || s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID && m.ChannelID == s.Policy.ExtraGuildChannelID)
+	if m == nil || m.Author == nil || !authorOK || m.Author.Bot || m.WebhookID != "" || (m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply) || (m.GuildID != "" && m.GuildID != s.Policy.GuildID && m.GuildID != s.Policy.ExtraGuildID) {
 		return "rejected", nil
 	}
 	event := projectGatewayMessage(s, m)

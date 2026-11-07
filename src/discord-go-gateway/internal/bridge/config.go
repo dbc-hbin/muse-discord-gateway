@@ -34,8 +34,11 @@ type Policy struct {
 	MessageContentApproved bool
 	// ExtraGuildID/ExtraGuildChannelID optionally designate one additional
 	// guild channel. That route is always mention-only, regardless of the
-	// primary guild mode: the bot answers there only when tagged. Threads
-	// and slash commands are not supported on the extra route.
+	// primary guild mode, and it is public: any human who tags the bot in
+	// that one channel may talk to it (owner request 2026-11-08). Every
+	// other route stays owner-only, and control envelopes stay owner-only
+	// on every route. Threads and slash commands are not supported on the
+	// extra route.
 	ExtraGuildID        string
 	ExtraGuildChannelID string
 }
@@ -72,7 +75,10 @@ func (p Policy) Allows(e Envelope) bool {
 	guild := p.GuildID != "" && e.GuildID == p.GuildID && (p.GuildMode == "all" || e.BotMentioned)
 	route := plain && (e.RouteKind == "dm" && e.GuildID == "" || e.RouteKind == "guild_text" && guild && e.ConversationID == p.GuildChannelID || e.RouteKind == "guild_text" && p.extraGuild(e)) ||
 		e.RouteKind == "guild_thread" && guild && e.ConversationID != p.GuildChannelID && e.ParentChannelID == p.GuildChannelID && (e.ThreadType == 11 || e.ThreadType == 12)
-	return (e.Control == "" || validControl(e)) && p.Validate() == nil && e.Platform == platform && route && !e.SenderIsBot && e.SenderID == p.OwnerID && Snowflake(e.ConversationID) && Snowflake(e.EventID)
+	// Sender binding: the owner everywhere, except that a non-control
+	// message on the public extra route may come from any human sender.
+	senderOK := e.SenderID == p.OwnerID || e.Control == "" && p.extraGuild(e)
+	return (e.Control == "" || validControl(e)) && p.Validate() == nil && e.Platform == platform && route && !e.SenderIsBot && senderOK && Snowflake(e.ConversationID) && Snowflake(e.EventID)
 }
 func (p Policy) Accepts(e Envelope) bool {
 	if e.Control != "" {
