@@ -54,6 +54,9 @@ SPECIFIC_AI_TERMS = (
     "openrouter", "deepseek", "kimi", "qwen", "glm", "minimax", "suno",
     "runway", "midjourney", "elevenlabs", "mistral", "huggingface",
     "novita", "zed", "qoder", "zcode", "华为", "码道", "gitee",
+    # Infrastructure deals are in scope too (owner instruction 2026-11-08):
+    # VPS / server hosting / IP(proxy) bargains count as relevance signals.
+    "vps", "服务器", "云服务器", "云主机", "原生ip", "住宅ip", "가상서버",
 )
 AI_TERMS = GENERIC_AI_TERMS + SPECIFIC_AI_TERMS
 
