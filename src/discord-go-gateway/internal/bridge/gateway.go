@@ -384,7 +384,11 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 			return
 		}
 		if m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply {
-			return
+			// Sole exception: member-join system messages on the extra
+			// guild route, which the consumer answers with a greeting.
+			if !(m.Type == discordgo.MessageTypeGuildMemberJoin && settings.Policy.ExtraGuildID != "" && m.GuildID == settings.Policy.ExtraGuildID && m.ChannelID == settings.Policy.ExtraGuildChannelID) {
+				return
+			}
 		}
 		select {
 		case incoming <- sourceGatewayEvent{Create: m.Message}:
@@ -756,7 +760,9 @@ func openGateway(ctx context.Context, s *discordgo.Session, d *gatewayDialer) er
 
 func receiveMessage(ctx context.Context, rest *RESTClient, store *Store, s Settings, m *discordgo.Message) (string, error) {
 	authorOK := m != nil && m.Author != nil && (m.Author.ID == s.Policy.OwnerID || s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID && m.ChannelID == s.Policy.ExtraGuildChannelID)
-	if m == nil || m.Author == nil || !authorOK || m.Author.Bot || m.WebhookID != "" || (m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply) || (m.GuildID != "" && m.GuildID != s.Policy.GuildID && m.GuildID != s.Policy.ExtraGuildID) {
+	typeOK := m != nil && (m.Type == discordgo.MessageTypeDefault || m.Type == discordgo.MessageTypeReply ||
+		m.Type == discordgo.MessageTypeGuildMemberJoin && s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID && m.ChannelID == s.Policy.ExtraGuildChannelID)
+	if m == nil || m.Author == nil || !authorOK || m.Author.Bot || m.WebhookID != "" || !typeOK || (m.GuildID != "" && m.GuildID != s.Policy.GuildID && m.GuildID != s.Policy.ExtraGuildID) {
 		return "rejected", nil
 	}
 	event := projectGatewayMessage(s, m)
@@ -779,6 +785,16 @@ func projectGatewayMessage(s Settings, m *discordgo.Message) Envelope {
 	for _, u := range m.Mentions {
 		if u != nil && u.ID == s.ExpectedBotID {
 			event.BotMentioned = true
+		}
+	}
+	if m.Type == discordgo.MessageTypeGuildMemberJoin && s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID && m.ChannelID == s.Policy.ExtraGuildChannelID {
+		event.MemberJoined = true
+		event.SenderName = m.Author.Username
+		if m.Author.GlobalName != "" {
+			event.SenderName = m.Author.GlobalName
+		}
+		if m.Member != nil && m.Member.Nick != "" {
+			event.SenderName = m.Member.Nick
 		}
 	}
 	if m.MessageReference != nil {

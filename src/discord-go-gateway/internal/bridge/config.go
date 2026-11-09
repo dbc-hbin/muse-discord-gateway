@@ -62,9 +62,10 @@ func (p Policy) Validate() error {
 	return nil
 }
 
-// extraGuild reports whether e hits the additional mention-only guild route.
+// extraGuild reports whether e hits the additional guild route: a bot
+// mention there, or a member-join system message (greeting only).
 func (p Policy) extraGuild(e Envelope) bool {
-	return p.ExtraGuildID != "" && e.GuildID == p.ExtraGuildID && e.ConversationID == p.ExtraGuildChannelID && e.BotMentioned
+	return p.ExtraGuildID != "" && e.GuildID == p.ExtraGuildID && e.ConversationID == p.ExtraGuildChannelID && (e.BotMentioned || e.MemberJoined)
 }
 func (p Policy) Allows(e Envelope) bool {
 	platform := p.Platform
@@ -87,7 +88,7 @@ func (p Policy) Accepts(e Envelope) bool {
 	if e.ReplyKind != "" && e.ReplyKind != "message" {
 		return false
 	}
-	return p.Allows(e) && utf8.ValidString(e.Text) && (trimText(e.Text) != "" || e.Media.HasContent()) && TextUnits(e.Text) <= 8000 && validEnvelopeMedia(e)
+	return p.Allows(e) && utf8.ValidString(e.Text) && (trimText(e.Text) != "" || e.Media.HasContent() || e.MemberJoined && p.extraGuild(e)) && TextUnits(e.Text) <= 8000 && validEnvelopeMedia(e)
 }
 
 // Stages is deliberately broader than Accepts only for hidden quarantine.

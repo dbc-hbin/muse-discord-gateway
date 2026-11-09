@@ -99,6 +99,29 @@ func TestPolicyExtraGuild(t *testing.T) {
 	if p.Allows(thread) {
 		t.Fatal("extra guild thread allowed")
 	}
+	// Member-join system messages on the extra route are allowed without a
+	// mention and with empty text (owner request 2026-11-09: greet joiners).
+	join := Envelope{Platform: "discord", EventID: "3", ConversationID: "7", SenderID: "42", RouteKind: "guild_text", GuildID: "6", MemberJoined: true, SenderName: "newbie"}
+	if !p.Allows(join) || !p.Accepts(join) {
+		t.Fatal("extra guild member join denied")
+	}
+	joinWrongChannel := join
+	joinWrongChannel.ConversationID = "9"
+	if p.Allows(joinWrongChannel) {
+		t.Fatal("member join on wrong channel allowed")
+	}
+	// The empty-text exception is bound to the extra route: the same join
+	// envelope on the primary guild must not be accepted.
+	joinPrimary := join
+	joinPrimary.GuildID, joinPrimary.ConversationID = "5", "2"
+	if p.Accepts(joinPrimary) {
+		t.Fatal("empty member join accepted on primary guild")
+	}
+	joinBot := join
+	joinBot.SenderIsBot = true
+	if p.Allows(joinBot) {
+		t.Fatal("bot member join allowed")
+	}
 	// Primary route unchanged: "all" mode needs no mention.
 	primary := Envelope{Platform: "discord", EventID: "3", ConversationID: "2", SenderID: "1", Text: "hi", RouteKind: "guild_text", GuildID: "5"}
 	if !p.Allows(primary) {
