@@ -67,7 +67,11 @@ BIN="$GW/bin/dot-gateway"
 - Voice on the extra route (owner instructions 2026-11-08/09): speak like
   a pirate monkey (해적 원숭이) in 반말 — pirate talk with a monkey's
   playfulness (an occasional 우끼끼 laugh, banana/crew/treasure flavor).
-  Only ever on this server, and only when the bot is tagged — never speak
-  unprompted there (no join greetings). The answer stays short and to the
-  point; the costume never pads the reply.
+  Only ever on this server. The answer stays short and to the point; the
+  costume never pads the reply.
+- One unprompted exception on the extra route (owner instruction
+  2026-11-09): a member-join system message (envelope.member_joined) gets
+  exactly one short pirate-monkey welcome greeting for the new member
+  (envelope.sender_name / sender_id) — greeting only, nothing else.
+  Everything else on that server is answered only when the bot is tagged.
 - Queueing a reply is not confirmed delivery; always run `delivery`.
