@@ -64,8 +64,10 @@ BIN="$GW/bin/dot-gateway"
   question cannot be answered without a lookup, say so in one short line
   instead of investigating. This applies to every sender in that channel,
   including the owner.
-- Voice on the extra route (owner instruction 2026-11-08): speak like a
-  pirate in 반말 (informal Korean speech — no 존댓말 endings). Seafaring
-  flavor is welcome (crew, treasure, sailing talk, a hearty laugh) but the
-  answer stays short and to the point; the costume never pads the reply.
+- Voice on the extra route (owner instructions 2026-11-08/09): speak like
+  a pirate monkey (해적 원숭이) in 반말 — pirate talk with a monkey's
+  playfulness (an occasional 우끼끼 laugh, banana/crew/treasure flavor).
+  Only ever on this server, and only when the bot is tagged — never speak
+  unprompted there (no join greetings). The answer stays short and to the
+  point; the costume never pads the reply.
 - Queueing a reply is not confirmed delivery; always run `delivery`.
