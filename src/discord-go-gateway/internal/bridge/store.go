@@ -500,6 +500,13 @@ func (s *Store) ClaimNextForConsumer(leaseSeconds, beginSeconds int, consumer st
 					break
 				}
 				for _, r := range rows {
+					// Fresh member joins belong to the gateway's instant
+					// auto-greet. A consumer may only take one over once it
+					// is stale — never race the greeter for a fresh one
+					// (a lost race cost a 34s greeting on 2026-11-12).
+					if r.event.MemberJoined && now-r.created < autoGreetClaimGraceSeconds {
+						continue
+					}
 					fenced, err := catchupFencedDB(db, r.event)
 					if err != nil {
 						return nil, err

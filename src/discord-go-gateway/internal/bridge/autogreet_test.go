@@ -99,6 +99,17 @@ func TestAutoReplyJoinGreetsPendingJoinOnce(t *testing.T) {
 	}
 }
 
+func TestFreshJoinIsReservedForAutoGreet(t *testing.T) {
+	s, path := autoGreetStore(t)
+	seedJoinInbound(t, path, "dddddddddddddddddddddddddddddddd", "100000000000000004", epoch())
+	// A just-staged join is inside the auto-greet grace window: the
+	// consumer must not be offered it at all.
+	claim, err := s.ClaimNext(300, 60)
+	if err != nil || claim != nil {
+		t.Fatalf("fresh join offered to consumer inside grace: %#v %v", claim, err)
+	}
+}
+
 func TestAutoReplyJoinSkipsStaleAndNonJoin(t *testing.T) {
 	s, path := autoGreetStore(t)
 	// Stale join (staged 10 minutes ago) is not eligible for auto-greet.
@@ -116,7 +127,9 @@ func TestAutoReplyJoinSkipsStaleAndNonJoin(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
-	fresh := seedJoinInbound(t, path, "cccccccccccccccccccccccccccccccc", "100000000000000003", epoch())
+	// Seeded 60s old: past the auto-greet claim grace, so the consumer
+	// may claim it — and a claimed join must refuse AutoReplyJoin.
+	fresh := seedJoinInbound(t, path, "cccccccccccccccccccccccccccccccc", "100000000000000003", epoch()-60)
 	claim, err := s.ClaimNext(300, 60)
 	if err != nil || claim == nil || claim.InboundID != "cccccccccccccccccccccccccccccccc" {
 		t.Fatalf("claim = %#v %v", claim, err)
