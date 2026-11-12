@@ -382,7 +382,14 @@ func (r *RESTClient) readSourceMessage(ctx context.Context, e Envelope) (*discor
 		}
 		return nil, err
 	}
-	if m.ID != e.EventID || m.ChannelID != e.ConversationID || (m.GuildID != "" && m.GuildID != e.GuildID) || m.Author == nil || m.Author.ID != e.SenderID || m.Author.Bot || m.WebhookID != "" || (m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply) {
+	// A member-join system message (type 7) is a valid reply source only for
+	// a join envelope projected from the extra guild channel — the same
+	// conditions under which ingest accepted it (see receiveMessage). Its
+	// greeting reply must pass this preflight or it can never be sent.
+	joinSource := m.Type == discordgo.MessageTypeGuildMemberJoin && e.MemberJoined &&
+		r.settings.Policy.ExtraGuildID != "" && e.GuildID == r.settings.Policy.ExtraGuildID &&
+		e.ConversationID == r.settings.Policy.ExtraGuildChannelID
+	if m.ID != e.EventID || m.ChannelID != e.ConversationID || (m.GuildID != "" && m.GuildID != e.GuildID) || m.Author == nil || m.Author.ID != e.SenderID || m.Author.Bot || m.WebhookID != "" || (m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply && !joinSource) {
 		return nil, errors.New("source_identity_changed")
 	}
 	m.GuildID = e.GuildID
