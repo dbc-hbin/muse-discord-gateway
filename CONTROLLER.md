@@ -12,6 +12,11 @@ see Safety notes). The wake payload is the raw `next` output:
 - IDs (`inbound_id`, `claim`, `reply_id`) are opaque strings. Copy them exactly;
   never invent or reconstruct them.
 - The gateway needs no Discord token for these commands. Never ask for one.
+- Fresh member joins on the extra route are greeted automatically by the
+  gateway itself (fixed template, `Store.AutoReplyJoin`) within a couple of
+  seconds — no consumer involved. If a join envelope still reaches you, it is
+  a stale one (staged over two minutes after the join, e.g. via catchup);
+  greet it with the usual one-line welcome and nothing else.
 
 ## Environment
 

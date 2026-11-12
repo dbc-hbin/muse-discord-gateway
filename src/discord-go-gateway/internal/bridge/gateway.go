@@ -537,6 +537,11 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		}
 	})
 	start(func() {
+		if err := autoGreetLoop(ctx, store, hub, settings); err != nil {
+			fail("gateway_autogreet_failed")
+		}
+	})
+	start(func() {
 		tick := time.NewTicker(3 * time.Second)
 		defer tick.Stop()
 		for {
@@ -832,6 +837,54 @@ func dispatchLoopMeasured(ctx context.Context, store *Store, hub *WakeHub, g *ga
 			}
 			store.RecordTiming("send", time.Since(started))
 			hub.Notify()
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-wake:
+		case <-tick.C:
+		}
+	}
+}
+
+// joinGreetingText is the fixed welcome for the extra guild route. It is
+// deliberately a constant template: greeting a new member needs no
+// reasoning, and routing it through a consumer cost ~60s of agent
+// startup for a single line (measured 2026-11-12).
+func joinGreetingText(e Envelope) string {
+	return "우우우 쌀쌀쌀, <@" + e.SenderID + "> 어서 와, 해적단 환영한다!"
+}
+
+// autoGreetLoop answers fresh member-join envelopes on the extra guild
+// route with the fixed greeting, queued through the ordinary reply and
+// dispatch path (Store.AutoReplyJoin). Joins staged more than two
+// minutes after the fact — e.g. by history catchup — are left for the
+// consumer, exactly as before.
+func autoGreetLoop(ctx context.Context, store *Store, hub *WakeHub, settings Settings) error {
+	if settings.Policy.ExtraGuildID == "" {
+		<-ctx.Done()
+		return nil
+	}
+	wake, unsub := hub.Subscribe()
+	defer unsub()
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		for ctx.Err() == nil {
+			e, err := store.PendingAutoGreetJoin(120)
+			if err != nil {
+				return err
+			}
+			if e == nil {
+				break
+			}
+			greeted, err := store.AutoReplyJoin(*e, joinGreetingText(*e))
+			if err != nil {
+				return err
+			}
+			if greeted {
+				hub.Notify()
+			}
 		}
 		select {
 		case <-ctx.Done():
