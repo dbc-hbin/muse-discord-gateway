@@ -936,6 +936,11 @@ func feedbackLoop(ctx context.Context, store *Store, rest *RESTClient, hub *Wake
 						target = r.Delivery
 					} else if r.State == "ignored" {
 						target = "ignored"
+					} else if r.Thinking {
+						// A consumer has begun and is still reasoning:
+						// show 💭 instead of 👀 so the wait is visible
+						// (owner request 2026-11-12).
+						target = "thinking"
 					}
 					key := r.ID + ":" + target
 					if r.FeedbackStage == target || blocked[key] || time.Now().Before(retry[key]) {
@@ -981,8 +986,19 @@ func updateFeedback(ctx context.Context, rest *RESTClient, e Envelope, old, targ
 			return err
 		}
 	}
-	if target == "received" {
+	if old == "thinking" && target != "thinking" {
+		if err := rest.RemoveReaction(ctx, e, "💭"); err != nil {
+			return err
+		}
+	}
+	switch target {
+	case "received":
 		return rest.Reaction(ctx, e, "👀")
+	case "thinking":
+		if err := rest.RemoveReaction(ctx, e, "👀"); err != nil {
+			return err
+		}
+		return rest.Reaction(ctx, e, "💭")
 	}
 	if err := rest.RemoveReaction(ctx, e, "👀"); err != nil {
 		return err

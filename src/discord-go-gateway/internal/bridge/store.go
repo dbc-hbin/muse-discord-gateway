@@ -1106,7 +1106,7 @@ func (s *Store) ResolveSent(id string, index int, messageID string) error {
 func (s *Store) FeedbackRows() ([]FeedbackRow, error) {
 	v, err := s.call(func(db *storeConn) (any, error) {
 		return transact(db, func(db *storeConn) (any, error) {
-			rows, err := db.Query(`SELECT i.id,i.state,COALESCE(i.claim,''),COALESCE(i.lease_until,0),i.envelope,COALESCE(p.until,0),COALESCE(p.claim,''),COALESCE(f.stage,''),COALESCE(r.id,'') FROM inbound i LEFT JOIN processing p ON p.inbound_id=i.id LEFT JOIN feedback f ON f.inbound_id=i.id LEFT JOIN replies r ON r.inbound_id=i.id WHERE f.stage IS NULL OR f.stage IN ('received','failed','uncertain') ORDER BY i.created,i.id`)
+			rows, err := db.Query(`SELECT i.id,i.state,COALESCE(i.claim,''),COALESCE(i.lease_until,0),i.envelope,COALESCE(p.until,0),COALESCE(p.claim,''),COALESCE(f.stage,''),COALESCE(r.id,'') FROM inbound i LEFT JOIN processing p ON p.inbound_id=i.id LEFT JOIN feedback f ON f.inbound_id=i.id LEFT JOIN replies r ON r.inbound_id=i.id WHERE f.stage IS NULL OR f.stage IN ('received','thinking','failed','uncertain') ORDER BY i.created,i.id`)
 			if err != nil {
 				return nil, err
 			}
@@ -1162,7 +1162,7 @@ func (s *Store) FeedbackRows() ([]FeedbackRow, error) {
 }
 func (s *Store) RecordFeedback(id, stage string) error {
 	switch stage {
-	case "received", "sent", "failed", "uncertain", "ignored":
+	case "received", "thinking", "sent", "failed", "uncertain", "ignored":
 	default:
 		return errors.New("invalid feedback stage")
 	}

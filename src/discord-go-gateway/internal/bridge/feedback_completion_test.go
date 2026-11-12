@@ -116,6 +116,41 @@ func TestFeedbackSentCleanupPersistsAndDoesNotRepeat(t *testing.T) {
 		t.Fatal(d, err)
 	}
 }
+func TestFeedbackThinkingTransitions(t *testing.T) {
+	cases := []struct {
+		old, target string
+		want        []string // method + emoji fragments, in order
+	}{
+		{"received", "thinking", []string{"DELETE 👀", "PUT 💭"}},
+		{"thinking", "sent", []string{"DELETE 💭", "DELETE 👀"}},
+		{"thinking", "failed", []string{"DELETE 💭", "DELETE 👀", "PUT ❌"}},
+		{"thinking", "received", []string{"DELETE 💭", "PUT 👀"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.old+"->"+tc.target, func(t *testing.T) {
+			var routes []string
+			r := localREST(t, func(w http.ResponseWriter, q *http.Request) {
+				if preflightHandler(w, q) {
+					return
+				}
+				routes = append(routes, q.Method+" "+q.URL.Path)
+				w.WriteHeader(204)
+			})
+			if err := updateFeedback(context.Background(), r, testEnvelope(), tc.old, tc.target); err != nil {
+				t.Fatal(err)
+			}
+			if len(routes) != len(tc.want) {
+				t.Fatalf("routes = %v, want %v", routes, tc.want)
+			}
+			for i, want := range tc.want {
+				parts := strings.SplitN(want, " ", 2)
+				if !strings.HasPrefix(routes[i], parts[0]+" ") || !strings.Contains(routes[i], parts[1]) {
+					t.Fatalf("route %d = %q, want %q (all: %v)", i, routes[i], want, routes)
+				}
+			}
+		})
+	}
+}
 func TestFeedbackSentCleanupFailureCannotMarkComplete(t *testing.T) {
 	r := localREST(t, func(w http.ResponseWriter, q *http.Request) {
 		if preflightHandler(w, q) {
