@@ -847,6 +847,11 @@ func dispatchLoopMeasured(ctx context.Context, store *Store, hub *WakeHub, g *ga
 	}
 }
 
+// autoGreetClaimGraceSeconds is how long a fresh member join stays
+// reserved for the gateway auto-greet before a consumer may claim it
+// as a stale fallback (see ClaimNextForConsumer).
+const autoGreetClaimGraceSeconds = 15
+
 // joinGreetings are the welcomes for the extra guild route, mixing
 // pirate flavor with the 쌀숭이 meme chant (owner asked for variation,
 // 2026-11-12 — not the same line every time). Greeting a new member
