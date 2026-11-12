@@ -734,6 +734,93 @@ func (s *Store) queueReply(id, claim, text string, manifest *ReplyManifest) (str
 	}
 	return v.(string), nil
 }
+// PendingAutoGreetJoin returns the oldest still-pending member-join
+// envelope from the extra guild route that was staged within maxAge
+// seconds, or nil. Only fresh joins are eligible: a join staged by
+// history catchup long after the fact must not trigger a greeting.
+func (s *Store) PendingAutoGreetJoin(maxAge float64) (*Envelope, error) {
+	v, err := s.call(func(db *storeConn) (any, error) {
+		rows, err := readInbound(db, `SELECT id,state,claim,lease_until,envelope FROM inbound WHERE state='pending' AND created>=? ORDER BY created,id`, epoch()-maxAge)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			if r.event.MemberJoined && s.policy.Allows(r.event) {
+				e := r.event
+				return &e, nil
+			}
+		}
+		return (*Envelope)(nil), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(*Envelope), nil
+}
+
+// AutoReplyJoin queues a fixed greeting reply for a member-join envelope
+// without involving a consumer. It applies only while the inbound is
+// still pending and unreplied, so a consumer that claimed the message
+// first always wins and a join is never greeted twice. The chunks flow
+// through the ordinary dispatcher and feedback loops, exactly like a
+// consumer-queued reply.
+func (s *Store) AutoReplyJoin(e Envelope, text string) (bool, error) {
+	parts, err := SplitText(text)
+	if err != nil {
+		return false, err
+	}
+	v, err := s.call(func(db *storeConn) (any, error) {
+		return transact(db, func(db *storeConn) (any, error) {
+			rows, err := readInbound(db, "SELECT id,state,claim,lease_until,envelope FROM inbound WHERE platform=? AND event_id=?", e.Platform, e.EventID)
+			if err != nil {
+				return nil, err
+			}
+			if len(rows) == 0 || rows[0].state != "pending" || !rows[0].event.MemberJoined || !s.policy.Accepts(rows[0].event) {
+				return false, nil
+			}
+			current, err := sourceCurrentDB(db, rows[0].event)
+			if err != nil {
+				return nil, err
+			}
+			if !current {
+				return false, nil
+			}
+			var existing string
+			err = db.QueryRow("SELECT id FROM replies WHERE inbound_id=?", rows[0].id).Scan(&existing)
+			if err == nil {
+				return false, nil
+			}
+			if err != sql.ErrNoRows {
+				return nil, err
+			}
+			rid, err := uuidHex()
+			if err != nil {
+				return nil, err
+			}
+			if _, err = db.Exec("INSERT INTO replies VALUES(?,?,?,?)", rid, rows[0].id, text, epoch()); err != nil {
+				return nil, err
+			}
+			for i, p := range parts {
+				if _, err = db.Exec("INSERT INTO chunks(reply_id,idx,text) VALUES(?,?,?)", rid, i, p); err != nil {
+					return nil, err
+				}
+			}
+			if _, err = db.Exec("UPDATE inbound SET state='replied',lease_until=NULL WHERE id=?", rows[0].id); err != nil {
+				return nil, err
+			}
+			var started float64
+			if err = db.QueryRow("SELECT COALESCE((SELECT max(at) FROM timings WHERE inbound_id=? AND stage='claimed'),created) FROM inbound WHERE id=?", rows[0].id, rows[0].id).Scan(&started); err == nil {
+				_ = insertTiming(db, rows[0].id, "reply_queued", epoch(), epoch()-started)
+			}
+			return true, nil
+		})
+	})
+	if err != nil {
+		return false, err
+	}
+	return v.(bool), nil
+}
+
 func (s *Store) Ignore(id, claim string) error {
 	_, err := s.call(func(db *storeConn) (any, error) {
 		return nil, changedOne(db.Exec("UPDATE inbound SET state='ignored',claim=NULL,lease_until=NULL WHERE id=? AND claim=? AND state='claimed' AND lease_until>?", id, claim, epoch()))
