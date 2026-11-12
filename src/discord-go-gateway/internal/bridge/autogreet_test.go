@@ -3,6 +3,7 @@ package bridge
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -54,8 +55,24 @@ func TestAutoReplyJoinGreetsPendingJoinOnce(t *testing.T) {
 		t.Fatalf("pending join not found: %#v %v", pending, err)
 	}
 	text := joinGreetingText(e)
-	if want := "우우우 쌀쌀쌀, <@" + e.SenderID + "> 어서 와, 해적단 환영한다!"; text != want {
-		t.Fatalf("unexpected greeting text %q, want %q", text, want)
+	known := false
+	for _, tpl := range joinGreetings {
+		if text == fmt.Sprintf(tpl, e.SenderID) {
+			known = true
+			break
+		}
+	}
+	if !known {
+		t.Fatalf("greeting %q is not one of the known templates", text)
+	}
+	// The pool must actually vary: many draws for the same member should
+	// not all land on one line.
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		seen[joinGreetingText(e)] = true
+	}
+	if len(seen) < 3 {
+		t.Fatalf("greeting pool does not vary: %v", seen)
 	}
 	greeted, err := s.AutoReplyJoin(e, text)
 	if err != nil || !greeted {

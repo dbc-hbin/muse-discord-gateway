@@ -847,12 +847,25 @@ func dispatchLoopMeasured(ctx context.Context, store *Store, hub *WakeHub, g *ga
 	}
 }
 
-// joinGreetingText is the fixed welcome for the extra guild route. It is
-// deliberately a constant template: greeting a new member needs no
-// reasoning, and routing it through a consumer cost ~60s of agent
-// startup for a single line (measured 2026-11-12).
+// joinGreetings are the welcomes for the extra guild route, mixing
+// pirate flavor with the 쌀숭이 meme chant (owner asked for variation,
+// 2026-11-12 — not the same line every time). Greeting a new member
+// needs no reasoning, and routing it through a consumer cost ~60s of
+// agent startup for a single line (measured 2026-11-12), so the gateway
+// picks one of these itself.
+var joinGreetings = []string{
+	"우우우 쌀쌀쌀, <@%s> 어서 와, 해적단 환영한다!",
+	"닻 내려라, 새 선원이다! <@%s> 해적선에 오른 걸 환영한다, 우우우 쌀쌀쌀!",
+	"어서 와 <@%s>, 여긴 토큰해적단이다. 쌀자루 하나씩 들고 시작해라!",
+	"우우우 쌀쌀쌀~ 새 쌀숭이가 탔다! <@%s> 환영한다!",
+	"입항 신고 확인! <@%s> 해적단에 온 걸 환영한다, 갑판으로 올라와라.",
+	"쌀쌀쌀 소리 들리면 새 선원 온 거지. <@%s> 어서 와!",
+	"어허, <@%s> 왔냐. 해적단 선원 명단에 올려주지, 환영한다!",
+	"돛 올려라! <@%s> 새 선원 합류다, 우우우 쌀쌀쌀 환영한다!",
+}
+
 func joinGreetingText(e Envelope) string {
-	return "우우우 쌀쌀쌀, <@" + e.SenderID + "> 어서 와, 해적단 환영한다!"
+	return fmt.Sprintf(joinGreetings[rand.IntN(len(joinGreetings))], e.SenderID)
 }
 
 // autoGreetLoop answers fresh member-join envelopes on the extra guild
