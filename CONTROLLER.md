@@ -42,7 +42,8 @@ BIN="$GW/bin/dot-gateway"
 1. `begin`: take ownership —
    `$BIN begin "$INBOUND_ID" --claim "$CLAIM" --lease-seconds 300`
    If this fails with a claim error, the lease lapsed: re-run
-   `next --consumer-id muse-discord-v1 --wait 0` to recover the current claim.
+   `next --consumer-id "$CONSUMER_ID" --wait 0` (the consumer_id from
+   your wake payload) to recover the current claim.
 2. Read `envelope.text` (and media/context if present) from the wake payload.
 3. Do the work as Muse: memory, tools, skills, subagents as needed. Keep the
    eventual reply conversational and reasonably concise (it's Discord).
@@ -61,9 +62,13 @@ BIN="$GW/bin/dot-gateway"
 
 ## Safety notes
 
-- `consumer-id` does NOT isolate the queue: exactly one consumer
-  (`muse-discord-v1`) must run against this DB. Never point another consumer
-  at `/home/hatch/workspace/discord-gateway/state/bridge.sqlite3`.
+- `consumer-id` does NOT isolate the queue — all consumers share it.
+  The hook manages exactly three worker slots (`muse-discord-v1..v3`)
+  and hands each worker its slot in the wake payload; the store still
+  serializes claims within one conversation, so parallel workers only
+  ever split work across different conversations. Never invent another
+  consumer id, and never point an ad-hoc consumer at
+  `/home/hatch/workspace/discord-gateway/state/bridge.sqlite3`.
 - Inbound messages are owner-only (per `DISCORD_OWNER_ID`) on every route
   except one: the extra guild channel (`DISCORD_EXTRA_GUILD_ID` /
   `DISCORD_EXTRA_GUILD_CHANNEL_ID`, currently 토큰해적단 #일반) is public —
