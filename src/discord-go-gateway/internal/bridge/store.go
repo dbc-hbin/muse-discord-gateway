@@ -87,6 +87,16 @@ type StorePolicy interface {
 	Allows(Envelope) bool
 	Accepts(Envelope) bool
 }
+
+// policyExtraGuildID returns the configured extra-guild route ID when
+// the store policy is the concrete Policy; other policy doubles have
+// no extra route.
+func policyExtraGuildID(p StorePolicy) string {
+	if xp, ok := p.(Policy); ok {
+		return xp.ExtraGuildID
+	}
+	return ""
+}
 type Store struct {
 	path          string
 	replyStateDir string
@@ -500,11 +510,12 @@ func (s *Store) ClaimNextForConsumer(leaseSeconds, beginSeconds int, consumer st
 					break
 				}
 				for _, r := range rows {
-					// Fresh member joins belong to the gateway's instant
-					// auto-greet. A consumer may only take one over once it
-					// is stale — never race the greeter for a fresh one
-					// (a lost race cost a 34s greeting on 2026-11-12).
-					if r.event.MemberJoined && now-r.created < autoGreetClaimGraceSeconds {
+					// Fresh member joins and pure greetings belong to the
+					// gateway's instant auto-replies. A consumer may only
+					// take one over once it is stale — never race the
+					// greeter for a fresh one (a lost race cost a 34s
+					// greeting on 2026-11-12, and a 27s one on 2026-11-13).
+					if now-r.created < autoGreetClaimGraceSeconds && (r.event.MemberJoined || (r.event.GuildID == policyExtraGuildID(s.policy) && IsGreetingOnly(r.event))) {
 						continue
 					}
 					fenced, err := catchupFencedDB(db, r.event)
@@ -765,6 +776,30 @@ func (s *Store) PendingAutoGreetJoin(maxAge float64) (*Envelope, error) {
 	return v.(*Envelope), nil
 }
 
+// PendingAutoGreeting returns the oldest still-pending extra-route
+// inbound whose text is a pure greeting (IsGreetingOnly) and that was
+// staged within maxAge seconds, or nil. Like joins, greetings get a
+// fixed instant answer from the gateway instead of a consumer session.
+func (s *Store) PendingAutoGreeting(maxAge float64) (*Envelope, error) {
+	v, err := s.call(func(db *storeConn) (any, error) {
+		rows, err := readInbound(db, `SELECT id,state,claim,lease_until,envelope FROM inbound WHERE state='pending' AND created>=? ORDER BY created,id`, epoch()-maxAge)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			if !r.event.MemberJoined && r.event.GuildID == policyExtraGuildID(s.policy) && IsGreetingOnly(r.event) && s.policy.Allows(r.event) {
+				e := r.event
+				return &e, nil
+			}
+		}
+		return (*Envelope)(nil), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(*Envelope), nil
+}
+
 // AutoReplyJoin queues a fixed greeting reply for a member-join envelope
 // without involving a consumer. It applies only while the inbound is
 // still pending and unreplied, so a consumer that claimed the message
@@ -772,6 +807,16 @@ func (s *Store) PendingAutoGreetJoin(maxAge float64) (*Envelope, error) {
 // through the ordinary dispatcher and feedback loops, exactly like a
 // consumer-queued reply.
 func (s *Store) AutoReplyJoin(e Envelope, text string) (bool, error) {
+	return s.autoReplyFixed(e, text, true)
+}
+
+// AutoReplyGreeting is AutoReplyJoin for a pure-greeting message on
+// the extra route: same pending-only guard, same outbox path.
+func (s *Store) AutoReplyGreeting(e Envelope, text string) (bool, error) {
+	return s.autoReplyFixed(e, text, false)
+}
+
+func (s *Store) autoReplyFixed(e Envelope, text string, join bool) (bool, error) {
 	parts, err := SplitText(text)
 	if err != nil {
 		return false, err
@@ -782,7 +827,14 @@ func (s *Store) AutoReplyJoin(e Envelope, text string) (bool, error) {
 			if err != nil {
 				return nil, err
 			}
-			if len(rows) == 0 || rows[0].state != "pending" || !rows[0].event.MemberJoined || !s.policy.Accepts(rows[0].event) {
+			if len(rows) == 0 || rows[0].state != "pending" || !s.policy.Accepts(rows[0].event) {
+				return false, nil
+			}
+			if join {
+				if !rows[0].event.MemberJoined {
+					return false, nil
+				}
+			} else if rows[0].event.MemberJoined || rows[0].event.GuildID != policyExtraGuildID(s.policy) || !IsGreetingOnly(rows[0].event) {
 				return false, nil
 			}
 			current, err := sourceCurrentDB(db, rows[0].event)
