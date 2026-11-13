@@ -196,6 +196,57 @@ func TestAutoReplyGreetingAnswersPendingGreeting(t *testing.T) {
 	}
 }
 
+func TestExtraRouteClaimsRunInParallel(t *testing.T) {
+	s, path := autoGreetStore(t)
+	// Two independent questions in the extra-route conversation.
+	seedGreetingInbound(t, path, "11111111111111111111111111111111", "100000000000000011", "<@1528396024492593324> 하이쿠 가격 얼마야", epoch())
+	seedGreetingInbound(t, path, "22222222222222222222222222222222", "100000000000000012", "<@1528396024492593324> 딥시크 가격은", epoch())
+
+	first, err := s.ClaimNextForConsumer(300, 60, "muse-discord-v1")
+	if err != nil || first == nil {
+		t.Fatalf("first claim = %#v %v", first, err)
+	}
+	// While the first is still claimed, a second worker may claim the
+	// next extra-route message in parallel (owner decision 2026-11-13).
+	second, err := s.ClaimNextForConsumer(300, 60, "muse-discord-v2")
+	if err != nil || second == nil || second.InboundID == first.InboundID {
+		t.Fatalf("parallel extra-route claim = %#v %v (first %#v)", second, err, first)
+	}
+}
+
+func TestOwnerConversationClaimsStaySerialized(t *testing.T) {
+	s, path := autoGreetStore(t)
+	seedGuildInbound := func(id, eventID, text string) {
+		t.Helper()
+		e := Envelope{Platform: "discord", EventID: eventID, ConversationID: "222222222222222222", GuildID: "555555555555555555", RouteKind: "guild_text", SenderID: "111111111111111111", SenderName: "owner", Text: text, BotMentioned: true, ReceivedAt: epoch()}
+		raw, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		if _, err := db.Exec("INSERT INTO inbound(id,platform,event_id,envelope,created) VALUES(?,?,?,?,?)", id, e.Platform, e.EventID, string(raw), epoch()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedGuildInbound("33333333333333333333333333333333", "100000000000000013", "첫 번째 작업 해줘")
+	seedGuildInbound("44444444444444444444444444444444", "100000000000000014", "두 번째 작업 해줘")
+
+	first, err := s.ClaimNextForConsumer(300, 60, "muse-discord-v1")
+	if err != nil || first == nil {
+		t.Fatalf("first claim = %#v %v", first, err)
+	}
+	// The owner's conversation stays serialized: no parallel claim
+	// while the first is live.
+	second, err := s.ClaimNextForConsumer(300, 60, "muse-discord-v2")
+	if err != nil || second != nil {
+		t.Fatalf("owner conversation parallel claim = %#v %v", second, err)
+	}
+}
+
 func TestAutoReplyJoinSkipsStaleAndNonJoin(t *testing.T) {
 	s, path := autoGreetStore(t)
 	// Stale join (staged 10 minutes ago) is not eligible for auto-greet.
