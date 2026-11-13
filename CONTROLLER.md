@@ -64,10 +64,15 @@ BIN="$GW/bin/dot-gateway"
 
 - `consumer-id` does NOT isolate the queue — all consumers share it.
   The hook manages exactly three worker slots (`muse-discord-v1..v3`)
-  and hands each worker its slot in the wake payload; the store still
-  serializes claims within one conversation, so parallel workers only
-  ever split work across different conversations. Never invent another
-  consumer id, and never point an ad-hoc consumer at
+  and hands each worker its slot in the wake payload. Claims serialize
+  within owner conversations (DM, main guild), but NOT on the extra
+  guild route (owner decision 2026-11-13): every reply there carries a
+  `message_reference` to its source message and the questions are
+  independent, so workers may answer extra-route messages in parallel.
+  A parallel answer cannot see a sibling message's reply — if a
+  message clearly builds on a previous answer in that channel, fold it
+  into the channel-context flow instead of answering blind. Never
+  invent another consumer id, and never point an ad-hoc consumer at
   `/home/hatch/workspace/discord-gateway/state/bridge.sqlite3`.
 - Inbound messages are owner-only (per `DISCORD_OWNER_ID`) on every route
   except one: the extra guild channel (`DISCORD_EXTRA_GUILD_ID` /

@@ -547,13 +547,22 @@ func (s *Store) ClaimNextForConsumer(leaseSeconds, beginSeconds int, consumer st
 					}
 					// Filter execution metadata before decoding conversation JSON;
 					// unrelated pending payloads must remain outside the claim page.
+					// Same-conversation claims serialize — EXCEPT on the
+					// extra guild route (owner decision 2026-11-13): every
+					// reply there carries a message_reference to its source
+					// message, and the questions are independent, so
+					// parallel workers may answer them concurrently.
+					// Owner conversations stay serialized because that work
+					// builds sequentially on prior answers.
 					var busy int
-					if err = db.QueryRow(`WITH busy AS MATERIALIZED (
-						SELECT id,platform,envelope FROM inbound WHERE state='worker_recovery_pending'
-						OR (state='claimed' AND lease_until>?)
-						OR EXISTS(SELECT 1 FROM (`+unresolvedWorkerBindingsSQL+`) b WHERE b.inbound_id=inbound.id))
-						SELECT count(*) FROM busy WHERE id!=? AND platform=? AND json_extract(envelope,'$.conversation_id')=?`, now, r.id, r.event.Platform, r.event.ConversationID).Scan(&busy); err != nil {
-						return nil, err
+					if extra := policyExtraGuildID(s.policy); extra == "" || r.event.GuildID != extra {
+						if err = db.QueryRow(`WITH busy AS MATERIALIZED (
+							SELECT id,platform,envelope FROM inbound WHERE state='worker_recovery_pending'
+							OR (state='claimed' AND lease_until>?)
+							OR EXISTS(SELECT 1 FROM (`+unresolvedWorkerBindingsSQL+`) b WHERE b.inbound_id=inbound.id))
+							SELECT count(*) FROM busy WHERE id!=? AND platform=? AND json_extract(envelope,'$.conversation_id')=?`, now, r.id, r.event.Platform, r.event.ConversationID).Scan(&busy); err != nil {
+							return nil, err
+						}
 					}
 					if busy > 0 {
 						continue
