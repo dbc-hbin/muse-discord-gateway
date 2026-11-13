@@ -110,6 +110,92 @@ func TestFreshJoinIsReservedForAutoGreet(t *testing.T) {
 	}
 }
 
+func TestIsGreetingOnly(t *testing.T) {
+	yes := []string{
+		"<@1528396024492593324> 쌀숭이 안뇽",
+		"<@1528396024492593324> 안녕",
+		"안뇽~",
+		"<@1528396024492593324> 하이!",
+		"ㅎㅇ",
+		"해적쌀숭 안녕ㅋㅋ",
+		"<@1528396024492593324> 방가 방가", // two tokens: must NOT match
+	}
+	// "방가 방가" is two non-filler tokens → not a pure greeting.
+	yes = yes[:len(yes)-1]
+	for _, text := range yes {
+		e := Envelope{Text: text, GuildID: "666666666666666666", BotMentioned: true}
+		if !IsGreetingOnly(e) {
+			t.Errorf("IsGreetingOnly(%q) = false, want true", text)
+		}
+	}
+	no := []string{
+		"안녕 가격 얼마야?",
+		"<@1528396024492593324> 하이쿠 가격 알려줘",
+		"<@1528396024492593324> 너처럼 좋은 봇이 있는데 왜 안온다고 생각하냐",
+		"안녕하세요 오늘 날씨 어때",
+		"방가 방가",
+		"",
+		"<@1528396024492593324>",
+	}
+	for _, text := range no {
+		e := Envelope{Text: text, GuildID: "666666666666666666", BotMentioned: true}
+		if IsGreetingOnly(e) {
+			t.Errorf("IsGreetingOnly(%q) = true, want false", text)
+		}
+	}
+}
+
+func seedGreetingInbound(t *testing.T, path, id, eventID, text string, created float64) Envelope {
+	t.Helper()
+	e := Envelope{Platform: "discord", EventID: eventID, ConversationID: "777777777777777777", GuildID: "666666666666666666", RouteKind: "guild_text", SenderID: "424242424242424242", SenderName: "crew", Text: text, BotMentioned: true, ReceivedAt: created}
+	raw, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("INSERT INTO inbound(id,platform,event_id,envelope,created) VALUES(?,?,?,?,?)", id, e.Platform, e.EventID, string(raw), created); err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+func TestAutoReplyGreetingAnswersPendingGreeting(t *testing.T) {
+	s, path := autoGreetStore(t)
+	e := seedGreetingInbound(t, path, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "100000000000000005", "<@1528396024492593324> 쌀숭이 안뇽", epoch())
+
+	pending, err := s.PendingAutoGreeting(120)
+	if err != nil || pending == nil || pending.EventID != "100000000000000005" {
+		t.Fatalf("pending greeting not found: %#v %v", pending, err)
+	}
+	// A fresh greeting is reserved for the gateway inside the grace
+	// window: the consumer must not be offered it.
+	if claim, err := s.ClaimNext(300, 60); err != nil || claim != nil {
+		t.Fatalf("fresh greeting offered to consumer inside grace: %#v %v", claim, err)
+	}
+	answered, err := s.AutoReplyGreeting(e, "쌀쌀쌀! <@424242424242424242> 반갑다.")
+	if err != nil || !answered {
+		t.Fatalf("auto greeting failed: %v %v", answered, err)
+	}
+	c, err := s.NextChunk()
+	if err != nil || c == nil || c.Text == "" {
+		t.Fatalf("expected greeting chunk, got %#v %v", c, err)
+	}
+	// Second attempt must not answer again.
+	answered, err = s.AutoReplyGreeting(e, "again")
+	if err != nil || answered {
+		t.Fatalf("second auto greeting = %v, %v", answered, err)
+	}
+	// A non-greeting message is never pending for the greeting lane.
+	seedGreetingInbound(t, path, "ffffffffffffffffffffffffffffffff", "100000000000000006", "<@1528396024492593324> 가격 얼마야", epoch())
+	if pending, err := s.PendingAutoGreeting(120); err != nil || pending != nil {
+		t.Fatalf("content message offered to greeting lane: %#v %v", pending, err)
+	}
+}
+
 func TestAutoReplyJoinSkipsStaleAndNonJoin(t *testing.T) {
 	s, path := autoGreetStore(t)
 	// Stale join (staged 10 minutes ago) is not eligible for auto-greet.

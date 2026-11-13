@@ -852,6 +852,75 @@ func dispatchLoopMeasured(ctx context.Context, store *Store, hub *WakeHub, g *ga
 // as a stale fallback (see ClaimNextForConsumer).
 const autoGreetClaimGraceSeconds = 15
 
+// greetingCores are the whole-message greetings the gateway may answer
+// itself on the extra route. The match is deliberately strict (see
+// IsGreetingOnly): anything with a question or real content goes to a
+// consumer as before.
+var greetingCores = map[string]bool{
+	"안녕": true, "안뇽": true, "안녕하세요": true, "하이": true,
+	"헬로": true, "헬로우": true, "하이루": true, "방가": true,
+	"반가워": true, "반갑다": true, "ㅎㅇ": true,
+}
+
+// greetingFillers are tokens that may surround a greeting core without
+// turning the message into content (names the crew calls the bot,
+// vocatives).
+var greetingFillers = map[string]bool{
+	"쌀숭이": true, "해적쌀숭": true, "해적쌀숭이": true, "쌀숭": true,
+	"야": true, "아": true, "어이": true, "선원": true, "봇": true,
+}
+
+// greetingReplies answer a pure greeting on the extra route, in the
+// same rotating pirate × 쌀숭이 voice as the join greetings. <@> is
+// replaced with a mention of the greeter.
+var greetingReplies = []string{
+	"우우우 쌀쌀쌀, <@> 왔냐! 갑판은 원래 시끌벅적해야 제맛이지.",
+	"쌀쌀쌀! <@> 반갑다, 오늘도 출항 준비는 끝났다.",
+	"닻 올릴 시간에 딱 맞춰 왔네, <@>. 어서 갑판으로 올라와라.",
+	"오, <@> 입항했냐. 쌀자루 하나 걸고 느긋하게 놀다 가라, 우우우 쌀쌀쌀.",
+	"바람 좋다, <@>. 해적선에 온 걸 환영한다, 쌀쌀쌀!",
+	"<@> 왔냐! 돛은 이미 폈고 쌀은 이미 실었다. 뭘 타고 놀래?",
+}
+
+// IsGreetingOnly reports whether an envelope's text is nothing but a
+// greeting aimed at the bot: mentions stripped, trailing punctuation
+// and laughter removed, filler vocatives dropped — what remains must
+// be exactly one greeting core. Questions and any message carrying
+// content return false, so they keep the full consumer path.
+func IsGreetingOnly(e Envelope) bool {
+	if e.MemberJoined || strings.ContainsAny(e.Text, "?？") {
+		return false
+	}
+	text := e.Text
+	// Strip mention tokens (<@123>, <@!123>, <@&123>).
+	for {
+		i := strings.Index(text, "<@")
+		if i < 0 {
+			break
+		}
+		j := strings.Index(text[i:], ">")
+		if j < 0 {
+			return false
+		}
+		text = text[:i] + " " + text[i+j+1:]
+	}
+	text = strings.TrimSpace(text)
+	if text == "" || len([]rune(text)) > 24 {
+		return false
+	}
+	// Drop trailing punctuation/emoji-ish filler and laughter jamo.
+	text = strings.TrimRight(text, " ~!.…ㅋㅎ^♥❤😀😄😁🙂👋🏴‍☠️🍚")
+	var kept []string
+	for _, tok := range strings.Fields(text) {
+		tok = strings.TrimRight(tok, " ~!.…ㅋㅎ^,")
+		if tok == "" || greetingFillers[tok] {
+			continue
+		}
+		kept = append(kept, tok)
+	}
+	return len(kept) == 1 && greetingCores[kept[0]]
+}
+
 // joinGreetings are the welcomes for the extra guild route, mixing
 // pirate flavor with the 쌀숭이 meme chant (owner asked for variation,
 // 2026-11-12 — not the same line every time). Greeting a new member
@@ -893,14 +962,30 @@ func autoGreetLoop(ctx context.Context, store *Store, hub *WakeHub, settings Set
 			if err != nil {
 				return err
 			}
-			if e == nil {
-				break
+			if e != nil {
+				greeted, err := store.AutoReplyJoin(*e, joinGreetingText(*e))
+				if err != nil {
+					return err
+				}
+				if greeted {
+					hub.Notify()
+				}
+				continue
 			}
-			greeted, err := store.AutoReplyJoin(*e, joinGreetingText(*e))
+			g, err := store.PendingAutoGreeting(120)
 			if err != nil {
 				return err
 			}
-			if greeted {
+			if g == nil {
+				break
+			}
+			text := greetingReplies[rand.IntN(len(greetingReplies))]
+			text = strings.Replace(text, "<@>", "<@"+g.SenderID+">", 1)
+			answered, err := store.AutoReplyGreeting(*g, text)
+			if err != nil {
+				return err
+			}
+			if answered {
 				hub.Notify()
 			}
 		}
