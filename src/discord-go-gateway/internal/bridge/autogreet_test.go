@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/bwmarrin/discordgo"
 )
 
 func autoGreetPolicy() Policy {
@@ -193,6 +195,31 @@ func TestAutoReplyGreetingAnswersPendingGreeting(t *testing.T) {
 	seedGreetingInbound(t, path, "ffffffffffffffffffffffffffffffff", "100000000000000006", "<@1528396024492593324> 가격 얼마야", epoch())
 	if pending, err := s.PendingAutoGreeting(120); err != nil || pending != nil {
 		t.Fatalf("content message offered to greeting lane: %#v %v", pending, err)
+	}
+}
+
+func TestProjectedSenderNamePrefersGuildNick(t *testing.T) {
+	// Owner rule 2026-11-14: address people by the name displayed in
+	// the server — member nick first, never the global name when a
+	// nick exists (he is 램혁수 in the pirate server, not DBC).
+	m := &discordgo.Message{
+		ID:        "900000000000000001",
+		ChannelID: "777777777777777777",
+		GuildID:   "666666666666666666",
+		Content:   "질문",
+		Author:    &discordgo.User{ID: "111111111111111111", Username: "dbc3106", GlobalName: "DBC"},
+		Member:    &discordgo.Member{Nick: "램혁수"},
+	}
+	if e := projectGatewayMessage(Settings{Policy: autoGreetPolicy()}, m); e.SenderName != "램혁수" {
+		t.Fatalf("sender name = %q, want guild nick", e.SenderName)
+	}
+	m.Member = nil
+	if e := projectGatewayMessage(Settings{Policy: autoGreetPolicy()}, m); e.SenderName != "DBC" {
+		t.Fatalf("sender name without member = %q, want global name", e.SenderName)
+	}
+	m.Author.GlobalName = ""
+	if e := projectGatewayMessage(Settings{Policy: autoGreetPolicy()}, m); e.SenderName != "dbc3106" {
+		t.Fatalf("sender name without global = %q, want username", e.SenderName)
 	}
 }
 

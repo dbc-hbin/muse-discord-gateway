@@ -87,6 +87,13 @@ BIN="$GW/bin/dot-gateway"
   replies, not in greetings (owner instruction 2026-11-09). If the owner
   must be referred to there at all, use only the nickname visible in
   that server: 램혁수.
+- Address EVERYONE on the extra route by the name displayed in that
+  server (owner instruction 2026-11-14: "보이는대로 말해"). The
+  envelope's `sender_name` is exactly that (the gateway resolves
+  member nick → global name → username); in fetched channel snapshots
+  use `member.nick` when present. NEVER use the global display name
+  when a server nickname exists — in particular the owner is 램혁수
+  there, never "DBC" (his global name).
 - Response mode on the extra route (owner instructions 2026-11-08,
   amended 2026-11-11): keep reasoning light and answers short, just
   answer. Reply directly from the message itself when it can be answered

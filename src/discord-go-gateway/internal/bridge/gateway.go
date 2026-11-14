@@ -781,6 +781,17 @@ func receiveMessage(ctx context.Context, rest *RESTClient, store *Store, s Setti
 
 func projectGatewayMessage(s Settings, m *discordgo.Message) Envelope {
 	event := Envelope{Media: ProjectMedia(m), ContentHash: MessageContentFingerprint(m), Context: projectMessageContext(m), Platform: "discord", EventID: m.ID, ConversationID: m.ChannelID, SenderID: m.Author.ID, Text: m.Content, ReceivedAt: wall(), RouteKind: "dm", GuildID: m.GuildID, SenderIsBot: m.Author.Bot}
+	// The sender's name AS DISPLAYED in this server: the guild member
+	// nickname wins over the global display name, which wins over the
+	// username (owner rule, 2026-11-14: "보이는대로 말해" — never call
+	// him by his global name DBC in the pirate server; he is 램혁수 there).
+	event.SenderName = m.Author.Username
+	if m.Author.GlobalName != "" {
+		event.SenderName = m.Author.GlobalName
+	}
+	if m.Member != nil && m.Member.Nick != "" {
+		event.SenderName = m.Member.Nick
+	}
 	if m.GuildID != "" {
 		event.RouteKind = "guild_text"
 		if m.ChannelID != s.Policy.GuildChannelID && m.ChannelID != s.Policy.ExtraGuildChannelID {
@@ -794,13 +805,6 @@ func projectGatewayMessage(s Settings, m *discordgo.Message) Envelope {
 	}
 	if m.Type == discordgo.MessageTypeGuildMemberJoin && s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID && m.ChannelID == s.Policy.ExtraGuildChannelID {
 		event.MemberJoined = true
-		event.SenderName = m.Author.Username
-		if m.Author.GlobalName != "" {
-			event.SenderName = m.Author.GlobalName
-		}
-		if m.Member != nil && m.Member.Nick != "" {
-			event.SenderName = m.Member.Nick
-		}
 	}
 	if m.MessageReference != nil {
 		event.ReplyToEventID = m.MessageReference.MessageID
