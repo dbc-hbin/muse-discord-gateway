@@ -15,3 +15,6 @@ bin/headed-broker
 *.tmp
 # insane-search runtime learning state
 src/insane-search-migration/data/
+
+# Generated media assets (kept locally, not source)
+assets/
