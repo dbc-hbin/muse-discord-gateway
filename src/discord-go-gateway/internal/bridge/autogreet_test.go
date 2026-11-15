@@ -114,13 +114,13 @@ func TestFreshJoinIsReservedForAutoGreet(t *testing.T) {
 
 func TestIsGreetingOnly(t *testing.T) {
 	yes := []string{
-		"<@1528396024492593324> 쌀숭이 안뇽",
-		"<@1528396024492593324> 안녕",
+		"<@999999999999999999> 쌀숭이 안뇽",
+		"<@999999999999999999> 안녕",
 		"안뇽~",
-		"<@1528396024492593324> 하이!",
+		"<@999999999999999999> 하이!",
 		"ㅎㅇ",
 		"해적쌀숭 안녕ㅋㅋ",
-		"<@1528396024492593324> 방가 방가", // two tokens: must NOT match
+		"<@999999999999999999> 방가 방가", // two tokens: must NOT match
 	}
 	// "방가 방가" is two non-filler tokens → not a pure greeting.
 	yes = yes[:len(yes)-1]
@@ -132,12 +132,12 @@ func TestIsGreetingOnly(t *testing.T) {
 	}
 	no := []string{
 		"안녕 가격 얼마야?",
-		"<@1528396024492593324> 하이쿠 가격 알려줘",
-		"<@1528396024492593324> 너처럼 좋은 봇이 있는데 왜 안온다고 생각하냐",
+		"<@999999999999999999> 하이쿠 가격 알려줘",
+		"<@999999999999999999> 너처럼 좋은 봇이 있는데 왜 안온다고 생각하냐",
 		"안녕하세요 오늘 날씨 어때",
 		"방가 방가",
 		"",
-		"<@1528396024492593324>",
+		"<@999999999999999999>",
 	}
 	for _, text := range no {
 		e := Envelope{Text: text, GuildID: "666666666666666666", BotMentioned: true}
@@ -167,7 +167,7 @@ func seedGreetingInbound(t *testing.T, path, id, eventID, text string, created f
 
 func TestAutoReplyGreetingAnswersPendingGreeting(t *testing.T) {
 	s, path := autoGreetStore(t)
-	e := seedGreetingInbound(t, path, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "100000000000000005", "<@1528396024492593324> 쌀숭이 안뇽", epoch())
+	e := seedGreetingInbound(t, path, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "100000000000000005", "<@999999999999999999> 쌀숭이 안뇽", epoch())
 
 	pending, err := s.PendingAutoGreeting(120)
 	if err != nil || pending == nil || pending.EventID != "100000000000000005" {
@@ -192,7 +192,7 @@ func TestAutoReplyGreetingAnswersPendingGreeting(t *testing.T) {
 		t.Fatalf("second auto greeting = %v, %v", answered, err)
 	}
 	// A non-greeting message is never pending for the greeting lane.
-	seedGreetingInbound(t, path, "ffffffffffffffffffffffffffffffff", "100000000000000006", "<@1528396024492593324> 가격 얼마야", epoch())
+	seedGreetingInbound(t, path, "ffffffffffffffffffffffffffffffff", "100000000000000006", "<@999999999999999999> 가격 얼마야", epoch())
 	if pending, err := s.PendingAutoGreeting(120); err != nil || pending != nil {
 		t.Fatalf("content message offered to greeting lane: %#v %v", pending, err)
 	}
@@ -226,8 +226,8 @@ func TestProjectedSenderNamePrefersGuildNick(t *testing.T) {
 func TestExtraRouteClaimsRunInParallel(t *testing.T) {
 	s, path := autoGreetStore(t)
 	// Two independent questions in the extra-route conversation.
-	seedGreetingInbound(t, path, "11111111111111111111111111111111", "100000000000000011", "<@1528396024492593324> 하이쿠 가격 얼마야", epoch())
-	seedGreetingInbound(t, path, "22222222222222222222222222222222", "100000000000000012", "<@1528396024492593324> 딥시크 가격은", epoch())
+	seedGreetingInbound(t, path, "11111111111111111111111111111111", "100000000000000011", "<@999999999999999999> 하이쿠 가격 얼마야", epoch())
+	seedGreetingInbound(t, path, "22222222222222222222222222222222", "100000000000000012", "<@999999999999999999> 딥시크 가격은", epoch())
 
 	first, err := s.ClaimNextForConsumer(300, 60, "muse-discord-v1")
 	if err != nil || first == nil {
