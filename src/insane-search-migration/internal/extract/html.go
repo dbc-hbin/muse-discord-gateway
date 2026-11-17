@@ -3,6 +3,7 @@
 package extract
 
 import (
+	"encoding/json"
 	"errors"
 	stdhtml "html"
 	"net/url"
@@ -136,6 +137,12 @@ func UnwrapJSON(value string) string {
 	s := trim(strings.TrimPrefix(value, "\ufeff"))
 	if strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[") {
 		return s
+	}
+	// Reader-proxy responses (e.g. r.jina.ai) wrap the untouched JSON payload
+	// in a short text preamble and return it as the document tail. Recover the
+	// payload only when the whole tail is one valid JSON value.
+	if idx := strings.Index(s, "{"); idx > 0 && json.Valid([]byte(s[idx:])) {
+		return s[idx:]
 	}
 	if !htmlLooking.MatchString(s) {
 		return s

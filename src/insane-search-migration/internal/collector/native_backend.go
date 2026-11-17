@@ -75,7 +75,19 @@ func (b *NativeBackend) fetchWithOptions(ctx context.Context, raw string, markdo
 	}
 	ctx, cancel := context.WithTimeout(ctx, b.OperationTimeout)
 	defer cancel()
-	request := engine.DefaultRequest(raw)
+	// linux.do sits behind a Cloudflare JS challenge that the native grid
+	// cannot pass from this network. Fetch it through the r.jina.ai reader
+	// proxy, which returns the untouched payload in a text wrapper that
+	// extract.UnwrapJSON strips. The canonical URL stays the first-party
+	// one: the reported final URL is mapped back below so listing routes,
+	// candidate links and topic fetches keep their linux.do identity.
+	fetchURL := raw
+	viaReader := false
+	if u, err := url.Parse(raw); err == nil && u.Host == "linux.do" {
+		fetchURL = "https://r.jina.ai/" + raw
+		viaReader = true
+	}
+	request := engine.DefaultRequest(fetchURL)
 	request.AcceptEmptyJSONArray = len(acceptEmpty) > 0 && acceptEmpty[0]
 	request.EnableMarkdown = markdown
 	request.EnableMainContent = markdown
@@ -87,6 +99,15 @@ func (b *NativeBackend) fetchWithOptions(ctx context.Context, raw string, markdo
 	if e != nil {
 		return "", "", "", "", e
 	}
+	finalURL := result.FinalURL
+	if viaReader {
+		// Only the reader-proxy rendering of the requested page maps back to
+		// the canonical URL; anything else keeps the observed final URL so
+		// redirect safety checks still see it.
+		if fu, err := url.Parse(finalURL); err == nil && fu.Host == "r.jina.ai" && strings.HasSuffix(finalURL, raw) {
+			finalURL = raw
+		}
+	}
 	if !result.OK {
 		reason := result.Verdict
 		if reason == "" {
@@ -95,9 +116,9 @@ func (b *NativeBackend) fetchWithOptions(ctx context.Context, raw string, markdo
 		if reason == "" {
 			reason = "fetch_failed"
 		}
-		return "", reason, result.Verdict, result.FinalURL, nil
+		return "", reason, result.Verdict, finalURL, nil
 	}
-	return result.Content, "", result.Verdict, result.FinalURL, nil
+	return result.Content, "", result.Verdict, finalURL, nil
 }
 func (b *NativeBackend) Listing(ctx context.Context, source Source) ([]Row, string, error) {
 	opts := b.Options

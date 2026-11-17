@@ -10,6 +10,7 @@ logs/
 bin/dot-gateway
 bin/insane
 bin/headed-broker
+bin/node-userns/
 # Temp
 /tmp/
 *.tmp

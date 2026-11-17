@@ -12,7 +12,7 @@ import (
 
 func TestJSONListingsAndBrowserViewers(t *testing.T) {
 	input := "{\"topic_list\":{\"topics\":[{\"id\":123,\"slug\":\"offer\",\"title\":\"Claude &amp; student\",\"excerpt\":\"<p>Free <b>month</b></p>\"}]}}"
-	for _, body := range []string{input, "<html><body><pre>" + strings.ReplaceAll(input, "&", "&amp;") + "</pre></body></html>"} {
+	for _, body := range []string{input, "<html><body><pre>" + strings.ReplaceAll(input, "&", "&amp;") + "</pre></body></html>", "Title: \n\nURL Source: https://linux.do/latest.json\n\nMarkdown Content:\n" + input} {
 		rows, diag := ParseListing("linux.do-welfare", "https://linux.do/latest.json", body)
 		if !diag.Recognized || diag.Format != "json" || len(rows) != 1 {
 			t.Fatalf("%+v %+v", rows, diag)

@@ -173,8 +173,34 @@ async function capture(input, config={}) {
       observations,terminalReason:boundary,headless:false,chromiumSandbox:true,browserVersion:browser.version()};
   } finally {clearTimeout(deadlineTimer);if(cancellationTimer)clearInterval(cancellationTimer);await Promise.race([Promise.all([context?.close().catch(()=>{}),browser?.close().catch(()=>{})]),sleep(5000)]);}
 }
+async function dohLookup(hostname, options) {
+  // The local resolver may return proxy fake-IPs (198.18.0.0/15) that the
+  // public-address guard must reject; resolve through the same verified DoH
+  // endpoint the native engine uses so the guard sees real addresses.
+  const base = process.env.INSANE_DOH_URL;
+  const out = [];
+  for (const type of ['A', 'AAAA']) {
+    const u = new URL(base);
+    u.searchParams.set('name', hostname);
+    u.searchParams.set('type', type);
+    const res = await fetch(u, {headers: {accept: 'application/dns-json'}});
+    if (!res.ok) throw new Error(`DoH lookup failed: HTTP ${res.status}`);
+    const data = await res.json();
+    for (const a of data.Answer || []) {
+      if (a.type === 1) out.push({address: a.data, family: 4});
+      else if (a.type === 28) out.push({address: a.data, family: 6});
+    }
+  }
+  if (!out.length) {
+    const err = new Error(`getaddrinfo ENOTFOUND ${hostname}`);
+    err.code = 'ENOTFOUND';
+    throw err;
+  }
+  return options && options.all ? out : out[0];
+}
 function configFromEnvironment() {
   const config={};
+  if(process.env.INSANE_DOH_URL)config.lookup=dohLookup;
   if(process.env.INSANE_CHROMIUM_PATH)config.executablePath=process.env.INSANE_CHROMIUM_PATH;
   if(process.env.INSANE_BROWSER_PROXY_CONFIG){
     const settings=JSON.parse(fs.readFileSync(process.env.INSANE_BROWSER_PROXY_CONFIG,'utf8'));
