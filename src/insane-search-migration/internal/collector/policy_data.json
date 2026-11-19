@@ -47,6 +47,34 @@
     [
       "x-openaidevs",
       "https://syndication.twitter.com/srv/timeline-profile/screen-name/OpenAIDevs"
+    ],
+    [
+      "x-cline",
+      "https://syndication.twitter.com/srv/timeline-profile/screen-name/cline"
+    ],
+    [
+      "x-novita",
+      "https://syndication.twitter.com/srv/timeline-profile/screen-name/novita_labs"
+    ],
+    [
+      "x-fireworks",
+      "https://syndication.twitter.com/srv/timeline-profile/screen-name/FireworksAI_HQ"
+    ],
+    [
+      "x-groq",
+      "https://syndication.twitter.com/srv/timeline-profile/screen-name/GroqInc"
+    ],
+    [
+      "x-qoder",
+      "https://syndication.twitter.com/srv/timeline-profile/screen-name/qoder_ai_ide"
+    ],
+    [
+      "x-zai",
+      "https://syndication.twitter.com/srv/timeline-profile/screen-name/Zai_org"
+    ],
+    [
+      "x-claudedevs",
+      "https://syndication.twitter.com/srv/timeline-profile/screen-name/ClaudeDevs"
     ]
   ],
   "GENERIC_AI_TERMS": [
