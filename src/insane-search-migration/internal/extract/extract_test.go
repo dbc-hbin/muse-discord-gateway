@@ -34,6 +34,24 @@ func TestJSONListingsAndBrowserViewers(t *testing.T) {
 		}
 	}
 }
+func TestXTimelineListing(t *testing.T) {
+	page := `<html><head><script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"timeline":{"entries":[` +
+		`{"content":{"tweet":{"id_str":"111","full_text":"Free credits for everyone https://t.co/abc","permalink":"/opencode/status/111","entities":{"urls":[{"url":"https://t.co/abc","expanded_url":"https://example.com/claim"}]},"user":{"screen_name":"opencode"}}}},` +
+		`{"content":{"tweet":{"id_str":"222","full_text":"@someone thanks!","permalink":"/opencode/status/222","in_reply_to_status_id_str":"999","user":{"screen_name":"opencode"}}}},` +
+		`{"content":{"tweet":{"id_str":"333","full_text":"RT @other: truncated deal text","permalink":"/opencode/status/333","retweeted_status":{"id_str":"444"},"user":{"screen_name":"opencode"}}}}` +
+		`]}}}}</script></head></html>`
+	rows, diag := ParseListing("x-opencode", "https://syndication.twitter.com/srv/timeline-profile/screen-name/opencode", page)
+	if !diag.Recognized || diag.Format != "x-timeline" || len(rows) != 1 {
+		t.Fatalf("%+v %+v", rows, diag)
+	}
+	if rows[0].URL != "https://x.com/opencode/status/111" || rows[0].Title != "Free credits for everyone https://example.com/claim" || rows[0].ListingExcerpt != rows[0].Title {
+		t.Fatal(rows[0])
+	}
+	if _, diag := ParseListing("x-opencode", "https://syndication.twitter.com/", "<html><body>login wall</body></html>"); diag.Recognized || diag.Error == "" {
+		t.Fatalf("x wall accepted: %+v", diag)
+	}
+}
+
 func TestHTMLListingAndDescription(t *testing.T) {
 	body := "<a href='/t/123'>Claude <b>student</b> coupon</a><a href='/no'>not topic</a>"
 	rows, diag := ParseListing("v2ex-hot", "https://www.v2ex.com/", body)

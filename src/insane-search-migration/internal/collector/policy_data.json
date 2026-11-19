@@ -31,6 +31,22 @@
     [
       "csdn-home",
       "https://blog.csdn.net/"
+    ],
+    [
+      "x-opencode",
+      "https://syndication.twitter.com/srv/timeline-profile/screen-name/opencode"
+    ],
+    [
+      "x-openrouter",
+      "https://syndication.twitter.com/srv/timeline-profile/screen-name/OpenRouterAI"
+    ],
+    [
+      "x-deepseek",
+      "https://syndication.twitter.com/srv/timeline-profile/screen-name/deepseek_ai"
+    ],
+    [
+      "x-openaidevs",
+      "https://syndication.twitter.com/srv/timeline-profile/screen-name/OpenAIDevs"
     ]
   ],
   "GENERIC_AI_TERMS": [

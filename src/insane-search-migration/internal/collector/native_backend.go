@@ -275,6 +275,12 @@ func dcMobileViewURL(raw string) (string, bool) {
 func (b *NativeBackend) Body(ctx context.Context, row Row) (string, string, error) {
 	source, raw := row.Source, row.URL
 	clean := func(s string) string { return StripPoison(extract.CleanText(s)) }
+	if strings.HasPrefix(source, "x-") {
+		// The syndication listing already carries the full tweet text and
+		// x.com status pages are login-walled, so there is no detail
+		// document to fetch.
+		return clean(row.ListingExcerpt), "", nil
+	}
 	if strings.HasPrefix(source, "linux.do") || strings.HasPrefix(source, "nodeloc") {
 		id := extract.TopicID(raw)
 		body, reason := "", ""

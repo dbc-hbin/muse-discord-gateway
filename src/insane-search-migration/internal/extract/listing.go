@@ -231,6 +231,12 @@ func ParseHTMLListing(source, base, text string) []Row {
 	return rows
 }
 func ParseListing(source, base, text string) ([]Row, ListingDiagnostics) {
+	if strings.HasPrefix(source, "x-") {
+		if len(text) > MaxInputBytes {
+			return nil, ListingDiagnostics{Format: "x-timeline", Error: "listing_too_large"}
+		}
+		return xListing(source, text)
+	}
 	rows, diag := jsonListing(source, base, text)
 	if diag.Recognized {
 		return rows, diag
