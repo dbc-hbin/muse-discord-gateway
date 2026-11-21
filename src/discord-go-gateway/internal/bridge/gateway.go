@@ -377,10 +377,10 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 		if m.Message == nil || m.Author == nil || m.Author.Bot || m.WebhookID != "" {
 			return
 		}
-		// Owner everywhere; the public extra guild channel additionally
-		// passes any human author through to policy staging, which still
-		// requires a bot mention there before anything is queued.
-		if m.Author.ID != settings.Policy.OwnerID && !(settings.Policy.ExtraGuildID != "" && m.GuildID == settings.Policy.ExtraGuildID && m.ChannelID == settings.Policy.ExtraGuildChannelID) {
+		// Owner everywhere; the public extra guild additionally passes
+		// any human author there through to policy staging, which still
+		// requires a bot mention before anything is queued.
+		if m.Author.ID != settings.Policy.OwnerID && !(settings.Policy.ExtraGuildID != "" && m.GuildID == settings.Policy.ExtraGuildID) {
 			return
 		}
 		if m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply {
@@ -764,7 +764,7 @@ func openGateway(ctx context.Context, s *discordgo.Session, d *gatewayDialer) er
 }
 
 func receiveMessage(ctx context.Context, rest *RESTClient, store *Store, s Settings, m *discordgo.Message) (string, error) {
-	authorOK := m != nil && m.Author != nil && (m.Author.ID == s.Policy.OwnerID || s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID && m.ChannelID == s.Policy.ExtraGuildChannelID)
+	authorOK := m != nil && m.Author != nil && (m.Author.ID == s.Policy.OwnerID || s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID)
 	typeOK := m != nil && (m.Type == discordgo.MessageTypeDefault || m.Type == discordgo.MessageTypeReply ||
 		m.Type == discordgo.MessageTypeGuildMemberJoin && s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID && m.ChannelID == s.Policy.ExtraGuildChannelID)
 	if m == nil || m.Author == nil || !authorOK || m.Author.Bot || m.WebhookID != "" || !typeOK || (m.GuildID != "" && m.GuildID != s.Policy.GuildID && m.GuildID != s.Policy.ExtraGuildID) {
@@ -794,7 +794,10 @@ func projectGatewayMessage(s Settings, m *discordgo.Message) Envelope {
 	}
 	if m.GuildID != "" {
 		event.RouteKind = "guild_text"
-		if m.ChannelID != s.Policy.GuildChannelID && m.ChannelID != s.Policy.ExtraGuildChannelID {
+		// Only the primary guild quarantines non-home channels as thread
+		// candidates; the extra guild route is guild-wide, so any of its
+		// channels stays a plain guild_text conversation.
+		if m.GuildID != s.Policy.ExtraGuildID && m.ChannelID != s.Policy.GuildChannelID && m.ChannelID != s.Policy.ExtraGuildChannelID {
 			event.RouteKind = "guild_thread_candidate"
 		}
 	}

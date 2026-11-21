@@ -396,7 +396,7 @@ func (r *RESTClient) ValidateChannel(c Channel, s Envelope) error {
 		}
 	} else if s.RouteKind == "guild_text" {
 		primary := c.GuildID == p.GuildID && c.ID == p.GuildChannelID && s.GuildID == p.GuildID
-		extra := p.ExtraGuildID != "" && c.GuildID == p.ExtraGuildID && c.ID == p.ExtraGuildChannelID && s.GuildID == p.ExtraGuildID
+		extra := p.ExtraGuildID != "" && c.GuildID == p.ExtraGuildID && s.GuildID == p.ExtraGuildID
 		if c.Type != 0 || !primary && !extra {
 			return errors.New("preflight_channel_mismatch")
 		}

@@ -33,12 +33,14 @@ type Policy struct {
 	GuildMode              string
 	MessageContentApproved bool
 	// ExtraGuildID/ExtraGuildChannelID optionally designate one additional
-	// guild channel. That route is always mention-only, regardless of the
-	// primary guild mode, and it is public: any human who tags the bot in
-	// that one channel may talk to it (owner request 2026-11-08). Every
-	// other route stays owner-only, and control envelopes stay owner-only
-	// on every route. Threads and slash commands are not supported on the
-	// extra route.
+	// guild and its home channel. That route is always mention-only,
+	// regardless of the primary guild mode, and it is public: any human
+	// who tags the bot in any text channel of that guild may talk to it
+	// (owner requests 2026-11-08, extended guild-wide 2026-11-21). The
+	// home channel remains the destination for member-join greetings.
+	// Every other route stays owner-only, and control envelopes stay
+	// owner-only on every route. Threads and slash commands are not
+	// supported on the extra route.
 	ExtraGuildID        string
 	ExtraGuildChannelID string
 }
@@ -63,9 +65,16 @@ func (p Policy) Validate() error {
 }
 
 // extraGuild reports whether e hits the additional guild route: a bot
-// mention there, or a member-join system message (greeting only).
+// mention in any text channel of that guild, or a member-join system
+// message in the home channel (greeting only).
 func (p Policy) extraGuild(e Envelope) bool {
-	return p.ExtraGuildID != "" && e.GuildID == p.ExtraGuildID && e.ConversationID == p.ExtraGuildChannelID && (e.BotMentioned || e.MemberJoined)
+	if p.ExtraGuildID == "" || e.GuildID != p.ExtraGuildID {
+		return false
+	}
+	if e.MemberJoined {
+		return e.ConversationID == p.ExtraGuildChannelID
+	}
+	return e.BotMentioned
 }
 func (p Policy) Allows(e Envelope) bool {
 	platform := p.Platform

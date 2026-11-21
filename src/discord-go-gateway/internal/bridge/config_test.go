@@ -52,10 +52,19 @@ func TestPolicyExtraGuild(t *testing.T) {
 	if !p.Allows(e) {
 		t.Fatal("extra guild mention denied")
 	}
+	// The extra route is guild-wide (owner request 2026-11-21): a mention
+	// in any other channel of the extra guild is also allowed.
 	other := e
 	other.ConversationID = "9"
-	if p.Allows(other) {
-		t.Fatal("extra guild wrong channel allowed")
+	if !p.Allows(other) {
+		t.Fatal("extra guild other channel mention denied")
+	}
+	// Member-join greetings stay bound to the home channel, though.
+	joinElsewhere := other
+	joinElsewhere.BotMentioned = false
+	joinElsewhere.MemberJoined = true
+	if p.Allows(joinElsewhere) {
+		t.Fatal("extra guild join outside home channel allowed")
 	}
 	// The extra route is public (owner request 2026-11-08): any human who
 	// mentions the bot there is allowed, under their own sender ID.
