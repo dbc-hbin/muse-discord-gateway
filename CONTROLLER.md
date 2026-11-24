@@ -157,27 +157,28 @@ BIN="$GW/bin/dot-gateway"
 - Server boosts on the extra route (owner instruction 2026-11-24): a
   boost system message (envelope.server_boosted) means envelope.sender_id
   just boosted 토큰해적단. Honour them in the hall-of-fame channel
-  (명예의-전당, 1574684067969110076), following the two reference cards in
-  ~/workspace/hall-of-fame/ref/ (dark navy + gold certificate style,
-  pirate flag/ship scene, booster avatar, nickname large, SERVER BOOSTER,
-  Thank You for Boosting!):
+  (명예의-전당, 1574684067969110076). The two cards in
+  ~/workspace/hall-of-fame/ref/ define the required ELEMENTS only —
+  booster avatar, nickname large, SERVER BOOSTER, a thank-you line, the
+  Korean thanks sentence, 토큰해적단 branding, pirate ship/flag art —
+  never copy their composition or style (owner correction 2026-11-24:
+  "누가 복사를 하랬냐, 올릴거면 다른 스타일로"). Invent a fresh style
+  for every card (e.g. treasure-map parchment, cinematic deck scene,
+  wanted poster, neon port — vary it):
   1. Fetch the booster's avatar (token-safe curl pattern): GET
      /guilds/1566480896889192548/members/<sender_id>, take the guild
      avatar if set, else user.avatar, and download
      https://cdn.discordapp.com/avatars/<sender_id>/<hash>.png?size=512
      (default embed avatar if the hash is null) to
      ~/workspace/hall-of-fame/work/avatar-<sender_id>.png.
-  2. Generate the card with the image tool, passing the avatar and
-     ~/workspace/hall-of-fame/ref/ref1.png as inputs: wide 16:9 banner in
-     the reference style — dark navy background, thin gold border,
-     top-left pirate-ship logo with 토큰해적단 / TOKEN PIRATES, a large
-     waving cream pirate flag on a mast against a sunset sky on the
-     right, the booster's profile picture in a large circle on the left,
-     'SERVER BOOSTER' in small letterspaced caps, the booster's server
-     nickname (envelope.sender_name) in large serif capitals,
-     'Thank You for Boosting!' in italic serif, and the Korean line
-     '토큰해적단의 항해에 소중한 바람을 더해주셨습니다.' — all text
-     rendered exactly.
+  2. Generate the card with the image tool, passing ONLY the avatar as
+     an input (never the reference cards — that makes it copy them):
+     wide 16:9, a fresh original style of your invention, containing the
+     booster's profile picture prominently, the booster's server
+     nickname (envelope.sender_name) in large letters, 'SERVER BOOSTER',
+     'Thank You for Boosting!', the Korean line '토큰해적단의 항해에
+     소중한 바람을 더해주셨습니다.', 토큰해적단 branding and pirate
+     ship/flag art — all text rendered exactly.
   3. Post it with send-channel.sh --channel 1574684067969110076 --file
      <generated image> (no caption).
   4. The envelope reply itself is one short pirate-voice thank-you line
