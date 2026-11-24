@@ -1,0 +1,10 @@
+{
+  "token_file": "env/bot-token",
+  "state_dir": "state/instinct-bridge",
+  "channels": ["111111111111111111"],
+  "send_allowlist": ["111111111111111111"],
+  "api_base": "https://discord.com/api/v10",
+  "request_timeout_seconds": 20,
+  "max_network_retries": 2,
+  "max_ratelimit_wait_seconds": 8
+}

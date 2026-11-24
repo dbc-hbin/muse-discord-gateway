@@ -8,14 +8,10 @@ logs/
 /*.sqlite3
 # Build artifacts (rebuild with Go 1.27.1, CGO_ENABLED=0)
 bin/dot-gateway
-bin/insane
-bin/headed-broker
 bin/node-userns/
 # Temp
 /tmp/
 *.tmp
-# insane-search runtime learning state
-src/insane-search-migration/data/
-
 # Generated media assets (kept locally, not source)
 assets/
+env/instinct-bridge.json
