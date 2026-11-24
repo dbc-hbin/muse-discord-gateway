@@ -67,6 +67,30 @@ func TestSendAckAndPayload(t *testing.T) {
 		t.Fatalf("%+v posts %d", result, posts.Load())
 	}
 }
+
+// Boost replies must go out without a message_reference (Discord 400s
+// references to boost system messages) and accept a reference-less ack.
+func TestBoostReplyHasNoReference(t *testing.T) {
+	c := testChunk()
+	c.Source.ServerBoosted = true
+	r := localREST(t, func(w http.ResponseWriter, r *http.Request) {
+		if preflightHandler(w, r) {
+			return
+		}
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if _, present := body["message_reference"]; present {
+			t.Error("boost payload carries a message_reference")
+		}
+		ack := ackFor(c)
+		delete(ack, "message_reference")
+		json.NewEncoder(w).Encode(ack)
+	})
+	result := r.Send(context.Background(), c)
+	if result.State != "sent" || result.MessageID != "9" {
+		t.Fatalf("%+v", result)
+	}
+}
 func TestNoRedirectOrHTTPRetry(t *testing.T) {
 	for _, status := range []int{302, 307, 429, 500, 503} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {

@@ -476,7 +476,15 @@ func Nonce(c Chunk) string {
 	return hex.EncodeToString(sum[:])[:24]
 }
 func payload(c Chunk) []byte {
-	b, _ := json.Marshal(map[string]any{"content": c.Text, "nonce": Nonce(c), "enforce_nonce": true, "allowed_mentions": map[string]any{"parse": []string{}, "users": []string{}, "roles": []string{}, "replied_user": false}, "message_reference": map[string]any{"message_id": c.Source.EventID, "channel_id": c.Source.ConversationID, "fail_if_not_exists": true}, "flags": 4})
+	body := map[string]any{"content": c.Text, "nonce": Nonce(c), "enforce_nonce": true, "allowed_mentions": map[string]any{"parse": []string{}, "users": []string{}, "roles": []string{}, "replied_user": false}, "flags": 4}
+	// Discord rejects message_reference replies to server-boost system
+	// messages with HTTP 400 (observed 2026-11-25: the first boost reply
+	// failed and the gateway stamped ❌ on the boost message). Boost
+	// replies therefore go out as plain messages in the same channel.
+	if !c.Source.ServerBoosted {
+		body["message_reference"] = map[string]any{"message_id": c.Source.EventID, "channel_id": c.Source.ConversationID, "fail_if_not_exists": true}
+	}
+	b, _ := json.Marshal(body)
 	return b
 }
 func (r *RESTClient) Send(ctx context.Context, c Chunk) SendResult { return r.SendGuarded(ctx, c, nil) }
@@ -631,13 +639,20 @@ func validateAck(a map[string]json.RawMessage, c Chunk, botID string) (string, s
 	if !present || !valid {
 		return "", ""
 	}
-	// Require full immutable reference even when content is unchanged.
+	// Require full immutable reference even when content is unchanged —
+	// except for boost replies, which are sent without a reference
+	// (Discord 400s references to boost system messages); those acks must
+	// carry no reference at all.
 	var ref struct {
 		MessageID string `json:"message_id"`
 		ChannelID string `json:"channel_id"`
 		GuildID   string `json:"guild_id"`
 	}
-	if json.Unmarshal(a["message_reference"], &ref) != nil || ref.MessageID != c.Source.EventID || ref.ChannelID != c.Source.ConversationID || ref.GuildID != "" && ref.GuildID != c.Source.GuildID {
+	if c.Source.ServerBoosted {
+		if raw, present := a["message_reference"]; present && string(raw) != "null" {
+			return "", ""
+		}
+	} else if json.Unmarshal(a["message_reference"], &ref) != nil || ref.MessageID != c.Source.EventID || ref.ChannelID != c.Source.ConversationID || ref.GuildID != "" && ref.GuildID != c.Source.GuildID {
 		return "", ""
 	}
 	if err := ValidateReplyOutputAck(a, c); err != nil {
