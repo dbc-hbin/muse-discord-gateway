@@ -15,3 +15,4 @@ bin/node-userns/
 # Generated media assets (kept locally, not source)
 assets/
 env/instinct-bridge.json
+__pycache__/

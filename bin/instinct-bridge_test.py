@@ -27,6 +27,7 @@ class MockDiscord:
         self.messages = {}       # channel_id -> list of message dicts (ascending ids)
         self.get_scripts = {}    # (method, path-prefix) -> list of (status, body) to play first
         self.posts = []          # recorded POST bodies
+        self.counts = {}         # (method, path) -> request count
 
     def add_message(self, channel_id, mid, content, author_id="1234", bot=False):
         msg = {
@@ -51,6 +52,7 @@ class MockDiscord:
         parsed = urlparse(handler.path)
         path = parsed.path
         qs = parse_qs(parsed.query)
+        self.counts[(method, path)] = self.counts.get((method, path), 0) + 1
 
         for (m, prefix), scripts in list(self.get_scripts.items()):
             if m == method and path.startswith(prefix) and scripts:
@@ -273,6 +275,90 @@ class BridgeTestCase(unittest.TestCase):
         self.mock.add_message("c1", 701, "next")
         p = self.run_bridge("poll")
         self.assertEqual([m["content"] for m in self.poll_lines(p)], ["next"])
+
+    def test_429_negative_retry_after_clamped_and_retried(self):
+        self.write_config(["c1"])
+        self.mock.script("GET", "/api/v10/users/@me", 429,
+                         {"message": "rate limited", "retry_after": -5})
+        p = self.run_bridge("poll")
+        self.assertEqual(p.returncode, 0, p.stderr)
+
+    def test_429_unparseable_retry_after_defaults_and_retries(self):
+        self.write_config(["c1"])
+        self.mock.script("GET", "/api/v10/users/@me", 429,
+                         {"message": "rate limited", "retry_after": "soon"})
+        p = self.run_bridge("poll")  # falls back to 1.0s wait, then retries
+        self.assertEqual(p.returncode, 0, p.stderr)
+
+    def test_malformed_page_entries_skipped(self):
+        self.write_config(["c1"])
+        self.run_bridge("poll")  # init on empty channel
+        good = self.mock.add_message("c1", 400, "valid")
+        page = ["not-a-dict", {"no_id": True}, {"id": "not-a-number"},
+                {"id": None}, good]
+        self.mock.script("GET", "/api/v10/channels/c1/messages", 200, page)
+        p = self.run_bridge("poll")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        lines = self.poll_lines(p)
+        self.assertEqual([m["content"] for m in lines], ["valid"])
+
+    def test_malformed_author_and_attachments_normalized(self):
+        self.write_config(["c1"])
+        self.run_bridge("poll")
+        msg = self.mock.add_message("c1", 410, "odd")
+        msg["author"] = "not-a-dict"
+        msg["attachments"] = ["bad", {"id": "a1", "filename": "f",
+                                      "url": "u", "size": 3}]
+        self.mock.script("GET", "/api/v10/channels/c1/messages", 200, [msg])
+        p = self.run_bridge("poll")
+        lines = self.poll_lines(p)
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["author"]["id"], None)
+        self.assertEqual(len(lines[0]["attachments"]), 1)
+
+    def test_first_run_init_tolerates_malformed_page(self):
+        self.write_config(["c1"])
+        self.mock.script("GET", "/api/v10/channels/c1/messages", 200,
+                         [{"no_id": True}, "junk"])
+        p = self.run_bridge("poll")  # init run
+        self.assertEqual(p.returncode, 0, p.stderr)
+        # initialized despite no usable id; next poll works normally
+        self.mock.add_message("c1", 420, "after init")
+        p = self.run_bridge("poll")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual([m["content"] for m in self.poll_lines(p)], ["after init"])
+
+    def test_first_run_init_rejects_nonlist_page(self):
+        self.write_config(["c1"])
+        self.mock.script("GET", "/api/v10/channels/c1/messages", 200,
+                         {"not": "a list"})
+        p = self.run_bridge("poll")
+        self.assertEqual(p.returncode, 6, p.stderr)
+
+    def test_unexpected_response_type_exits_6(self):
+        self.write_config(["c1"])
+        self.mock.script("GET", "/api/v10/users/@me", 200, "garbage-string")
+        p = self.run_bridge("poll")
+        self.assertEqual(p.returncode, 6, p.stderr)
+
+    def test_network_retry_count_is_bounded(self):
+        self.write_config(["c1"])
+        for _ in range(3):
+            self.mock.script("GET", "/api/v10/users/@me", 500, {"message": "boom"})
+        p = self.run_bridge("poll")  # 1 initial + 2 retries = 3 attempts, then fail
+        self.assertEqual(p.returncode, 6, p.stderr)
+        self.assertEqual(self.mock.counts[("GET", "/api/v10/users/@me")], 3)
+        # 2 failures then success: third attempt succeeds
+        self.mock.script("GET", "/api/v10/users/@me", 500, {"message": "boom"})
+        self.mock.script("GET", "/api/v10/users/@me", 500, {"message": "boom"})
+        p = self.run_bridge("poll")
+        self.assertEqual(p.returncode, 0, p.stderr)
+
+    def test_plain_http_api_base_refused_off_loopback(self):
+        self.write_config(["c1"], api_base="http://192.0.2.1/api/v10")
+        p = self.run_bridge("poll")
+        self.assertEqual(p.returncode, 2, p.stderr)
+        self.assertIn("loopback", p.stderr)
 
     def test_send_success(self):
         self.write_config(["c1"])

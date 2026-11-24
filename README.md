@@ -95,7 +95,23 @@ degraded 5-7 minute cadence in the meantime.
 Error semantics for the worker: exit 3 means the token is invalid (stop
 and re-provision), 4 means one channel is forbidden/gone (others still
 polled), 5 means rate limited beyond the bounded in-run wait (skip this
-fire), 6 means a network/5xx failure after retries (skip this fire).
+fire), 6 means a network/5xx failure after retries or any unexpected
+error (skip this fire).
+
+### Limitations and safety properties
+
+- At-most-once relay per run: the cursor is saved before the batch is
+  printed to stdout, so a crash in that window loses the batch (it is
+  never re-emitted). This ordering is chosen over at-least-once to make
+  duplicate relays impossible.
+- State is reconstructible but lossy: if the state file is lost, a
+  channel re-runs its first-run init, which sets the cursor to the
+  newest message and skips everything that arrived during the gap.
+- api_base must be https; plain http is refused except for loopback
+  (test mocks). The token file must be a 0600 non-symlink regular file
+  and is opened with O_NOFOLLOW.
+- Messages edited or deleted after relay are not tracked; only new
+  message IDs are emitted.
 
 Removed on this branch: the deal-scanner tree (`src/insane-search-migration`,
 `bin/ssd-deal-scan.py`, `bin/insane-hosts-refresh.sh`, `INSANE_SEARCH.md`)

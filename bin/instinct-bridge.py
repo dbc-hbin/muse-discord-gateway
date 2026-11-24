@@ -28,7 +28,7 @@ Exit codes:
   3  Discord 401 (token invalid or revoked)
   4  Discord 403/404 on at least one channel (others still processed)
   5  rate limited (429) beyond the bounded in-run wait; rerun later
-  6  network or 5xx failure after bounded retries
+  6  network or 5xx failure after bounded retries, or an unexpected error
 
 Config (JSON):
 {
@@ -97,6 +97,12 @@ def load_config(path):
     if not isinstance(allow, list) or not all(isinstance(c, str) for c in allow):
         raise BridgeError(2, "config send_allowlist must be a list of strings")
     cfg.setdefault("api_base", API_BASE_DEFAULT)
+    api = urllib.parse.urlparse(cfg["api_base"])
+    if api.scheme == "http" and api.hostname not in ("127.0.0.1", "localhost", "::1"):
+        raise BridgeError(2, "api_base over plain http is only allowed for "
+                             "loopback (got %s)" % cfg["api_base"])
+    if api.scheme not in ("http", "https"):
+        raise BridgeError(2, "api_base must be http(s)")
     cfg.setdefault("request_timeout_seconds", 20)
     cfg.setdefault("max_network_retries", 2)
     cfg.setdefault("max_ratelimit_wait_seconds", 8)
@@ -119,7 +125,8 @@ def read_token(path):
     if st.st_mode & 0o077:
         raise BridgeError(2, "token file must be mode 0600 (got %04o)" % (st.st_mode & 0o777))
     try:
-        with open(path, encoding="utf-8") as f:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, encoding="utf-8") as f:
             token = f.read().strip()
     except OSError as e:
         raise BridgeError(2, "token file unreadable: %s" % e)
@@ -183,7 +190,12 @@ class State:
 # ------------------------------------------------------------------ http ----
 
 def discord_request(cfg, token, method, path, params=None, body=None):
-    """One Discord REST call with bounded 429/5xx/network handling."""
+    """One Discord REST call with bounded 429/5xx/network handling.
+
+    Attempts: 1 initial try + up to max_network_retries retries for
+    network errors and 5xx; at most one in-run retry for 429 when the
+    wait is short enough.
+    """
     url = cfg["api_base"].rstrip("/") + path
     if params:
         url += "?" + urllib.parse.urlencode(params)
@@ -197,7 +209,6 @@ def discord_request(cfg, token, method, path, params=None, body=None):
         payload = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
 
-    network_attempts = cfg["max_network_retries"] + 1
     attempt = 0
     ratelimit_retried = False
     while True:
@@ -223,24 +234,31 @@ def discord_request(cfg, token, method, path, params=None, body=None):
                 raise BridgeError(4, "discord 404 not found: %s" % msg)
             if e.code == 429:
                 retry_after = detail.get("retry_after")
-                if retry_after is None:
+                if retry_after is not None:
+                    try:
+                        retry_after = float(retry_after)
+                    except (TypeError, ValueError):
+                        retry_after = 1.0
+                else:
                     ra_hdr = e.headers.get("Retry-After") if e.headers else None
                     try:
                         retry_after = float(ra_hdr) if ra_hdr else 1.0
-                    except ValueError:
+                    except (TypeError, ValueError):
                         retry_after = 1.0
+                if retry_after < 0:
+                    retry_after = 0.0
                 if (not ratelimit_retried
                         and retry_after <= cfg["max_ratelimit_wait_seconds"]):
                     ratelimit_retried = True
                     time.sleep(retry_after)
                     continue
                 raise BridgeError(5, "discord 429 rate limited, retry_after=%.1fs" % retry_after)
-            if 500 <= e.code < 600 and attempt <= network_attempts:
+            if 500 <= e.code < 600 and attempt <= cfg["max_network_retries"]:
                 time.sleep(min(2 ** (attempt - 1), 4))
                 continue
             raise BridgeError(6, "discord HTTP %d: %s" % (e.code, msg))
         except (urllib.error.URLError, OSError) as e:
-            if attempt <= network_attempts:
+            if attempt <= cfg["max_network_retries"]:
                 time.sleep(min(2 ** (attempt - 1), 4))
                 continue
             raise BridgeError(6, "network error: %s" % e)
@@ -249,9 +267,13 @@ def discord_request(cfg, token, method, path, params=None, body=None):
 # ------------------------------------------------------------------ poll ----
 
 def normalize_message(m):
-    author = m.get("author") or {}
+    author = m.get("author")
+    if not isinstance(author, dict):
+        author = {}
     attachments = []
     for a in m.get("attachments") or []:
+        if not isinstance(a, dict):
+            continue
         attachments.append({
             "id": a.get("id"),
             "filename": a.get("filename"),
@@ -287,8 +309,19 @@ def poll_channel(cfg, token, state, cid, bot_id, out):
             page = discord_request(cfg, token, "GET",
                                    "/channels/%s/messages" % cid,
                                    params={"limit": 1})
-            if page:
-                ch["cursor"] = str(max(int(m["id"]) for m in page))
+            if not isinstance(page, list):
+                eprint("channel %s: unexpected response shape" % cid)
+                return 6
+            ids = []
+            for m in page:
+                if not isinstance(m, dict):
+                    continue
+                try:
+                    ids.append(int(m["id"]))
+                except (KeyError, TypeError, ValueError):
+                    continue
+            if ids:
+                ch["cursor"] = str(max(ids))
             ch["initialized"] = True
             return 0
         if cursor is None:
@@ -313,6 +346,8 @@ def poll_channel(cfg, token, state, cid, bot_id, out):
     new_max = after
     fresh = []
     for m in page:
+        if not isinstance(m, dict):
+            continue
         try:
             mid = int(m["id"])
         except (KeyError, TypeError, ValueError):
@@ -321,7 +356,9 @@ def poll_channel(cfg, token, state, cid, bot_id, out):
             new_max = mid
         if str(mid) in seen or mid <= after:
             continue  # dedupe across offset workers and overlapping pages
-        author = m.get("author") or {}
+        author = m.get("author")
+        if not isinstance(author, dict):
+            author = {}
         if bot_id and str(author.get("id")) == str(bot_id):
             continue  # never relay the bot's own output back
         seen.add(str(mid))
@@ -425,6 +462,9 @@ def main(argv=None):
     except OSError as e:
         eprint("error: %s" % e)
         return 2
+    except Exception as e:  # unexpected: report as transient, never crash
+        eprint("error: unexpected %s: %s" % (type(e).__name__, e))
+        return 6
 
 
 if __name__ == "__main__":
