@@ -389,7 +389,11 @@ func (r *RESTClient) readSourceMessage(ctx context.Context, e Envelope) (*discor
 	joinSource := m.Type == discordgo.MessageTypeGuildMemberJoin && e.MemberJoined &&
 		r.settings.Policy.ExtraGuildID != "" && e.GuildID == r.settings.Policy.ExtraGuildID &&
 		e.ConversationID == r.settings.Policy.ExtraGuildChannelID
-	if m.ID != e.EventID || m.ChannelID != e.ConversationID || (m.GuildID != "" && m.GuildID != e.GuildID) || m.Author == nil || m.Author.ID != e.SenderID || m.Author.Bot || m.WebhookID != "" || (m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply && !joinSource) {
+	// A server-boost system message (types 8-11) is likewise a valid reply
+	// source only for a boost envelope projected from the extra guild.
+	boostSource := isBoostMessageType(m.Type) && e.ServerBoosted &&
+		r.settings.Policy.ExtraGuildID != "" && e.GuildID == r.settings.Policy.ExtraGuildID
+	if m.ID != e.EventID || m.ChannelID != e.ConversationID || (m.GuildID != "" && m.GuildID != e.GuildID) || m.Author == nil || m.Author.ID != e.SenderID || m.Author.Bot || m.WebhookID != "" || (m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply && !joinSource && !boostSource) {
 		return nil, errors.New("source_identity_changed")
 	}
 	m.GuildID = e.GuildID

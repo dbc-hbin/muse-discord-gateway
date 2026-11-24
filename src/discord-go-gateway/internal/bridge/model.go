@@ -27,7 +27,12 @@ type Envelope struct {
 	BotMentioned   bool            `json:"bot_mentioned"`
 	// Set only when the gateway projects a guild-member-join system message
 	// on the extra guild route; the consumer answers it with a greeting.
-	MemberJoined bool   `json:"member_joined,omitempty"`
+	MemberJoined bool `json:"member_joined,omitempty"`
+	// Set only when the gateway projects a server-boost system message
+	// (Discord types 8-11) on the extra guild route; the consumer answers
+	// it by posting a hall-of-fame image for the booster (owner request
+	// 2026-11-24).
+	ServerBoosted bool `json:"server_boosted,omitempty"`
 	SenderName   string `json:"sender_name,omitempty"`
 	// Set only by durable promotion after fresh REST thread/parent validation.
 	ParentChannelID string `json:"parent_channel_id,omitempty"`

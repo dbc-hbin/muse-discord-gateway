@@ -65,14 +65,18 @@ func (p Policy) Validate() error {
 }
 
 // extraGuild reports whether e hits the additional guild route: a bot
-// mention in any text channel of that guild, or a member-join system
-// message in the home channel (greeting only).
+// mention in any text channel of that guild, a member-join system
+// message in the home channel (greeting only), or a server-boost system
+// message anywhere in that guild (hall-of-fame image only).
 func (p Policy) extraGuild(e Envelope) bool {
 	if p.ExtraGuildID == "" || e.GuildID != p.ExtraGuildID {
 		return false
 	}
 	if e.MemberJoined {
 		return e.ConversationID == p.ExtraGuildChannelID
+	}
+	if e.ServerBoosted {
+		return true
 	}
 	return e.BotMentioned
 }
@@ -97,7 +101,7 @@ func (p Policy) Accepts(e Envelope) bool {
 	if e.ReplyKind != "" && e.ReplyKind != "message" {
 		return false
 	}
-	return p.Allows(e) && utf8.ValidString(e.Text) && (trimText(e.Text) != "" || e.Media.HasContent() || e.MemberJoined && p.extraGuild(e)) && TextUnits(e.Text) <= 8000 && validEnvelopeMedia(e)
+	return p.Allows(e) && utf8.ValidString(e.Text) && (trimText(e.Text) != "" || e.Media.HasContent() || e.MemberJoined && p.extraGuild(e) || e.ServerBoosted && p.extraGuild(e)) && TextUnits(e.Text) <= 8000 && validEnvelopeMedia(e)
 }
 
 // Stages is deliberately broader than Accepts only for hidden quarantine.

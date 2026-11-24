@@ -154,4 +154,36 @@ BIN="$GW/bin/dot-gateway"
   exactly one short pirate-monkey welcome greeting for the new member
   (envelope.sender_name / sender_id) — greeting only, nothing else.
   Everything else on that server is answered only when the bot is tagged.
+- Server boosts on the extra route (owner instruction 2026-11-24): a
+  boost system message (envelope.server_boosted) means envelope.sender_id
+  just boosted 토큰해적단. Honour them in the hall-of-fame channel
+  (명예의-전당, 1574684067969110076), following the two reference cards in
+  ~/workspace/hall-of-fame/ref/ (dark navy + gold certificate style,
+  pirate flag/ship scene, booster avatar, nickname large, SERVER BOOSTER,
+  Thank You for Boosting!):
+  1. Fetch the booster's avatar (token-safe curl pattern): GET
+     /guilds/1566480896889192548/members/<sender_id>, take the guild
+     avatar if set, else user.avatar, and download
+     https://cdn.discordapp.com/avatars/<sender_id>/<hash>.png?size=512
+     (default embed avatar if the hash is null) to
+     ~/workspace/hall-of-fame/work/avatar-<sender_id>.png.
+  2. Generate the card with the image tool, passing the avatar and
+     ~/workspace/hall-of-fame/ref/ref1.png as inputs: wide 16:9 banner in
+     the reference style — dark navy background, thin gold border,
+     top-left pirate-ship logo with 토큰해적단 / TOKEN PIRATES, a large
+     waving cream pirate flag on a mast against a sunset sky on the
+     right, the booster's profile picture in a large circle on the left,
+     'SERVER BOOSTER' in small letterspaced caps, the booster's server
+     nickname (envelope.sender_name) in large serif capitals,
+     'Thank You for Boosting!' in italic serif, and the Korean line
+     '토큰해적단의 항해에 소중한 바람을 더해주셨습니다.' — all text
+     rendered exactly.
+  3. Post it with send-channel.sh --channel 1574684067969110076 --file
+     <generated image> (no caption).
+  4. The envelope reply itself is one short pirate-voice thank-you line
+     to <@sender_id> in the boost message's own channel, saying the card
+     is up in 명예의 전당.
+  If generation or upload fails, still send the thank-you reply and note
+  the failure in the execute summary. No channel-context fetch for
+  boosts.
 - Queueing a reply is not confirmed delivery; always run `delivery`.

@@ -384,9 +384,13 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 			return
 		}
 		if m.Type != discordgo.MessageTypeDefault && m.Type != discordgo.MessageTypeReply {
-			// Sole exception: member-join system messages on the extra
-			// guild route, which the consumer answers with a greeting.
-			if !(m.Type == discordgo.MessageTypeGuildMemberJoin && settings.Policy.ExtraGuildID != "" && m.GuildID == settings.Policy.ExtraGuildID && m.ChannelID == settings.Policy.ExtraGuildChannelID) {
+			// Exceptions: member-join system messages on the extra guild
+			// route, which the consumer answers with a greeting, and
+			// server-boost system messages there, which the consumer
+			// answers with a hall-of-fame image for the booster.
+			joinOK := m.Type == discordgo.MessageTypeGuildMemberJoin && settings.Policy.ExtraGuildID != "" && m.GuildID == settings.Policy.ExtraGuildID && m.ChannelID == settings.Policy.ExtraGuildChannelID
+			boostOK := isBoostMessageType(m.Type) && settings.Policy.ExtraGuildID != "" && m.GuildID == settings.Policy.ExtraGuildID
+			if !joinOK && !boostOK {
 				return
 			}
 		}
@@ -763,10 +767,21 @@ func openGateway(ctx context.Context, s *discordgo.Session, d *gatewayDialer) er
 	}
 }
 
+// isBoostMessageType reports whether t is one of Discord's server-boost
+// system message types (a member boosted, or the guild hit boost tier
+// 1/2/3 because of a boost).
+func isBoostMessageType(t discordgo.MessageType) bool {
+	return t == discordgo.MessageTypeUserPremiumGuildSubscription ||
+		t == discordgo.MessageTypeUserPremiumGuildSubscriptionTierOne ||
+		t == discordgo.MessageTypeUserPremiumGuildSubscriptionTierTwo ||
+		t == discordgo.MessageTypeUserPremiumGuildSubscriptionTierThree
+}
+
 func receiveMessage(ctx context.Context, rest *RESTClient, store *Store, s Settings, m *discordgo.Message) (string, error) {
 	authorOK := m != nil && m.Author != nil && (m.Author.ID == s.Policy.OwnerID || s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID)
 	typeOK := m != nil && (m.Type == discordgo.MessageTypeDefault || m.Type == discordgo.MessageTypeReply ||
-		m.Type == discordgo.MessageTypeGuildMemberJoin && s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID && m.ChannelID == s.Policy.ExtraGuildChannelID)
+		m.Type == discordgo.MessageTypeGuildMemberJoin && s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID && m.ChannelID == s.Policy.ExtraGuildChannelID ||
+		isBoostMessageType(m.Type) && s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID)
 	if m == nil || m.Author == nil || !authorOK || m.Author.Bot || m.WebhookID != "" || !typeOK || (m.GuildID != "" && m.GuildID != s.Policy.GuildID && m.GuildID != s.Policy.ExtraGuildID) {
 		return "rejected", nil
 	}
@@ -808,6 +823,9 @@ func projectGatewayMessage(s Settings, m *discordgo.Message) Envelope {
 	}
 	if m.Type == discordgo.MessageTypeGuildMemberJoin && s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID && m.ChannelID == s.Policy.ExtraGuildChannelID {
 		event.MemberJoined = true
+	}
+	if isBoostMessageType(m.Type) && s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID {
+		event.ServerBoosted = true
 	}
 	if m.MessageReference != nil {
 		event.ReplyToEventID = m.MessageReference.MessageID

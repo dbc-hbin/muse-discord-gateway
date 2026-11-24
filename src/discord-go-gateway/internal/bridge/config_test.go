@@ -66,6 +66,23 @@ func TestPolicyExtraGuild(t *testing.T) {
 	if p.Allows(joinElsewhere) {
 		t.Fatal("extra guild join outside home channel allowed")
 	}
+	// Server-boost system messages are accepted guild-wide on the extra
+	// route, from the booster (a stranger), with empty text.
+	boost := Envelope{Platform: "discord", EventID: "4", ConversationID: "9", SenderID: "42", RouteKind: "guild_text", GuildID: "6", ServerBoosted: true}
+	if !p.Allows(boost) || !p.Accepts(boost) {
+		t.Fatal("extra guild boost denied")
+	}
+	// A boost flag never opens any other route.
+	boostPrimary := boost
+	boostPrimary.GuildID, boostPrimary.ConversationID = "5", "2"
+	if p.Allows(boostPrimary) {
+		t.Fatal("boost on primary guild allowed")
+	}
+	boostDM := boost
+	boostDM.RouteKind, boostDM.GuildID = "dm", ""
+	if p.Allows(boostDM) {
+		t.Fatal("boost as DM allowed")
+	}
 	// The extra route is public (owner request 2026-11-08): any human who
 	// mentions the bot there is allowed, under their own sender ID.
 	stranger := e

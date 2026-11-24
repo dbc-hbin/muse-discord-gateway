@@ -1,6 +1,7 @@
 #!/bin/bash
 # Post a message to a Discord guild text channel via REST API.
 # Usage: send-channel.sh --channel <channel-id> --text "message" | --text-file /path/to/file
+#        send-channel.sh --channel <channel-id> --file /path/to/image.png [--text "caption"]
 # Reads the bot token from the 0600 token file; never prints it.
 # The channel must be listed in DISCORD_SEND_ALLOWLIST (gateway.env); anything
 # else is refused. The token is passed to curl via a 0600 config file, never argv.
@@ -16,16 +17,26 @@ set +a
 
 CHANNEL=""
 TEXT=""
+FILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --channel) CHANNEL="$2"; shift 2 ;;
     --text) TEXT="$2"; shift 2 ;;
     --text-file) TEXT="$(cat "$2")"; shift 2 ;;
-    *) echo "usage: send-channel.sh --channel ID (--text TEXT | --text-file FILE)" >&2; exit 2 ;;
+    --file) FILE="$2"; shift 2 ;;
+    *) echo "usage: send-channel.sh --channel ID (--text TEXT | --text-file FILE | --file IMAGE [--text CAPTION])" >&2; exit 2 ;;
   esac
 done
 [ -n "$CHANNEL" ] || { echo "channel id required" >&2; exit 2; }
-[ -n "$TEXT" ] || { echo "empty text" >&2; exit 2; }
+if [ -n "$FILE" ]; then
+  [ -f "$FILE" ] || { echo "file not found: $FILE" >&2; exit 2; }
+  case "$FILE" in
+    *.png|*.jpg|*.jpeg|*.webp|*.gif) ;;
+    *) echo "unsupported file type: $FILE" >&2; exit 2 ;;
+  esac
+else
+  [ -n "$TEXT" ] || { echo "empty text" >&2; exit 2; }
+fi
 [ -f "$TOKEN_FILE" ] || { echo "token file missing" >&2; exit 1; }
 
 # Destination allowlist: refuse any channel not explicitly approved, so this
@@ -46,6 +57,33 @@ trap 'rm -rf "$TMPD"' EXIT
 CURL_CONF="$TMPD/curl.conf"
 printf 'header = "Authorization: Bot %s"\nheader = "Content-Type: application/json"\n' "$TOKEN" > "$CURL_CONF"
 chmod 600 "$CURL_CONF"
+
+# File upload path: single multipart POST (payload_json + files[0]); curl
+# sets the multipart Content-Type itself, so this config carries no
+# Content-Type header.
+if [ -n "$FILE" ]; then
+  FILE_CONF="$TMPD/curl-file.conf"
+  printf 'header = "Authorization: Bot %s"\n' "$TOKEN" > "$FILE_CONF"
+  chmod 600 "$FILE_CONF"
+  unset TOKEN
+  nonce=$(python3 -c "import secrets; print(secrets.token_hex(12))")
+  payload=$(python3 - "$TEXT" "$nonce" <<'EOF'
+import json, sys
+print(json.dumps({"content": sys.argv[1], "enforce_nonce": True, "nonce": sys.argv[2],
+                  "allowed_mentions": {"parse": []}}))
+EOF
+)
+  out=$(curl -s --max-time 60 -x "$PROXY" -X POST -K "$FILE_CONF" \
+    -F "payload_json=$payload" -F "files[0]=@$FILE" \
+    "https://discord.com/api/v10/channels/$CHANNEL/messages")
+  mid=$(printf '%s' "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
+  if [ -z "$mid" ]; then
+    echo "file post failed: $(printf '%s' "$out" | head -c 300)" >&2
+    exit 1
+  fi
+  echo "sent file message_id=$mid"
+  exit 0
+fi
 unset TOKEN
 
 # Split text into chunks of at most 1900 chars, preferring newline boundaries.
