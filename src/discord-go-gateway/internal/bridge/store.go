@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -194,7 +195,18 @@ func (s *Store) run(path string, ready chan error) {
 	}
 	ready <- nil
 	for req := range s.requests {
-		v, e := req.fn(owned)
+		// Contain panics to the offending call: without this, one panic
+		// kills the actor goroutine and every later call blocks forever
+		// on a channel nobody drains. transact's deferred ROLLBACK has
+		// already run by the time the panic reaches this point.
+		v, e := func() (v any, e error) {
+			defer func() {
+				if r := recover(); r != nil {
+					v, e = nil, fmt.Errorf("store operation panicked: %v", r)
+				}
+			}()
+			return req.fn(owned)
+		}()
 		req.result <- storeResponse{v, e}
 	}
 	s.closeErr = conn.Close()
@@ -1330,6 +1342,11 @@ func (s *Store) Status() (map[string]any, error) {
 				return nil, err
 			}
 			out["cancelled_replies"] = cancelledReplies
+			queue, err := queueBlockage(db)
+			if err != nil {
+				return nil, err
+			}
+			out["queue"] = queue
 			rows, err := db.Query("SELECT stage,count(*),avg(duration_ms),max(duration_ms) FROM timings GROUP BY stage ORDER BY stage")
 			if err != nil {
 				return nil, err

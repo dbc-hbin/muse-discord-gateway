@@ -495,3 +495,18 @@ func TestStoreLegacyTestSendStatusReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A panic inside one store operation must be contained to that call:
+// the actor keeps serving and Close still completes (previously the
+// run goroutine died and every later call blocked forever).
+func TestStoreCallPanicIsContained(t *testing.T) {
+	s, _ := testStore(t)
+	if _, err := s.call(func(db *storeConn) (any, error) { panic("boom") }); err == nil {
+		t.Fatal("panic was not converted to an error")
+	}
+	ingestLedger(t, s, "after", "c")
+	c := claimLedger(t, s)
+	if c.Envelope.EventID != "after" {
+		t.Fatalf("store did not keep serving after panic: %#v", c)
+	}
+}

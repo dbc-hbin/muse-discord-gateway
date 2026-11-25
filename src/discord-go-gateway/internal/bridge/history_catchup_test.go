@@ -456,3 +456,112 @@ func TestCatchupLiveAboveUpperRemainsFencedInSuccessor(t *testing.T) {
 		t.Fatal(next, err)
 	}
 }
+
+// Catchup must stage exactly what the live path would stage on the
+// extra guild route: a stranger's bot mention and a boost system
+// message were silently dropped by the old owner-only page filter, and
+// the floor advanced past them (permanent loss, incl. hall-of-fame
+// boost cards missed during an outage).
+func TestCatchupStagesExtraGuildStrangerAndBoost(t *testing.T) {
+	s, path := autoGreetStore(t)
+	cfg := Settings{DBPath: path, Policy: autoGreetPolicy(), ExpectedBotID: "999999999999999999"}
+	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	if err := s.ActivateCatchup(cfg, now); err != nil {
+		t.Fatal(err)
+	}
+	baseline := snowPrevious(snowAt(now.Add(time.Millisecond)))
+	route := Envelope{ConversationID: "777777777777777777", GuildID: "666666666666666666", RouteKind: "guild_text"}
+	if _, err := s.call(func(db *storeConn) (any, error) {
+		return nil, catchupRegisterDB(db, route, baseline)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.call(func(db *storeConn) (any, error) {
+		return nil, requestCatchupDB(db, "777777777777777777", catchupAdd(baseline, 250), "test_gap")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	in, err := s.nextCatchup(epoch() + 100)
+	if err != nil || in == nil || in.ChannelID != "777777777777777777" {
+		t.Fatalf("gap not due: %#v %v", in, err)
+	}
+	bot := &discordgo.User{ID: "999999999999999999"}
+	stranger := &discordgo.User{ID: "424242424242424242", Username: "crew"}
+	mk := func(id string, typ discordgo.MessageType, content string, mentions []*discordgo.User) *discordgo.Message {
+		return &discordgo.Message{ID: id, ChannelID: "777777777777777777", GuildID: "666666666666666666", Type: typ, Author: stranger, Content: content, Mentions: mentions}
+	}
+	page := []*discordgo.Message{
+		mk(catchupAdd(baseline, 3), discordgo.MessageTypeUserPremiumGuildSubscription, "", nil),
+		mk(catchupAdd(baseline, 2), discordgo.MessageTypeDefault, "<@999999999999999999> 가격 얼마야", []*discordgo.User{bot}),
+		mk(catchupAdd(baseline, 1), discordgo.MessageTypeDefault, "그냥 잡담", nil),
+	}
+	if out, err := s.applyCatchupPage(cfg, *in, page); err != nil {
+		t.Fatalf("apply page: %q %v", out, err)
+	}
+	staged := map[string]bool{}
+	if _, err := s.call(func(db *storeConn) (any, error) {
+		rows, err := db.Query(`SELECT envelope FROM ingress_validation`)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var raw string
+			if err = rows.Scan(&raw); err != nil {
+				return nil, err
+			}
+			var e Envelope
+			if err = json.Unmarshal([]byte(raw), &e); err != nil {
+				return nil, err
+			}
+			staged[e.EventID] = true
+		}
+		return nil, rows.Err()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !staged[catchupAdd(baseline, 3)] {
+		t.Error("boost message was not staged by catchup")
+	}
+	if !staged[catchupAdd(baseline, 2)] {
+		t.Error("stranger mention was not staged by catchup")
+	}
+	if staged[catchupAdd(baseline, 1)] {
+		t.Error("unmentioned stranger chat must not be staged")
+	}
+}
+
+func TestLiveMessageAdmissibleMatchesRoutes(t *testing.T) {
+	cfg := Settings{Policy: autoGreetPolicy(), ExpectedBotID: "999999999999999999"}
+	owner := &discordgo.User{ID: "111111111111111111"}
+	stranger := &discordgo.User{ID: "424242424242424242"}
+	bot := &discordgo.User{ID: "999999999999999999", Bot: true}
+	base := func() *discordgo.Message {
+		return &discordgo.Message{ID: "1", ChannelID: "777777777777777777", GuildID: "666666666666666666", Type: discordgo.MessageTypeDefault, Author: stranger, Content: "hi"}
+	}
+	cases := []struct {
+		name   string
+		mutate func(*discordgo.Message)
+		want   bool
+	}{
+		{"stranger in extra guild", func(m *discordgo.Message) {}, true},
+		{"owner in extra guild", func(m *discordgo.Message) { m.Author = owner }, true},
+		{"owner DM", func(m *discordgo.Message) { m.Author = owner; m.GuildID = ""; m.ChannelID = "313131313131313131" }, true},
+		{"stranger DM", func(m *discordgo.Message) { m.GuildID = ""; m.ChannelID = "313131313131313131" }, false},
+		{"stranger in primary guild", func(m *discordgo.Message) { m.GuildID = "555555555555555555"; m.ChannelID = "222222222222222222" }, false},
+		{"bot author", func(m *discordgo.Message) { m.Author = bot }, false},
+		{"webhook", func(m *discordgo.Message) { m.WebhookID = "1" }, false},
+		{"join in extra home channel", func(m *discordgo.Message) { m.Type = discordgo.MessageTypeGuildMemberJoin }, true},
+		{"join in other extra channel", func(m *discordgo.Message) { m.Type = discordgo.MessageTypeGuildMemberJoin; m.ChannelID = "888888888888888888" }, false},
+		{"boost in extra guild", func(m *discordgo.Message) { m.Type = discordgo.MessageTypeUserPremiumGuildSubscriptionTierOne }, true},
+		{"boost in primary guild", func(m *discordgo.Message) { m.Type = discordgo.MessageTypeUserPremiumGuildSubscription; m.GuildID = "555555555555555555"; m.ChannelID = "222222222222222222" }, false},
+		{"foreign guild", func(m *discordgo.Message) { m.GuildID = "121212121212121212"; m.Author = owner }, false},
+	}
+	for _, tc := range cases {
+		m := base()
+		tc.mutate(m)
+		if got := liveMessageAdmissible(cfg, m); got != tc.want {
+			t.Errorf("%s: liveMessageAdmissible = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

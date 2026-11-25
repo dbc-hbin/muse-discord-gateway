@@ -478,7 +478,7 @@ func (s *Store) applyCatchupPage(settings Settings, in CatchupStatus, messages [
 				if !snowLess(floor, m.ID) {
 					continue
 				}
-				if m.Author.ID == settings.Policy.OwnerID && !m.Author.Bot && m.WebhookID == "" && (m.Type == discordgo.MessageTypeDefault || m.Type == discordgo.MessageTypeReply) {
+				if liveMessageAdmissible(settings, m) {
 					event := projectGatewayMessage(settings, m)
 					if s.stages(event) {
 						result, e := s.stageIngressDB(db, event, snowCreated(m.ID), 1000)
@@ -556,6 +556,8 @@ func catchupLoop(ctx context.Context, s *Store, r *RESTClient, hub *WakeHub, g *
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	var lastEpoch uint64 = ^uint64(0)
+	var routesEpoch uint64 = ^uint64(0)
+	var registered map[string]bool
 	for {
 		ready, current := g.readiness()
 		if ready && ctx.Err() == nil {
@@ -564,8 +566,16 @@ func catchupLoop(ctx context.Context, s *Store, r *RESTClient, hub *WakeHub, g *
 					return err
 				}
 				lastEpoch = current
+				registered = map[string]bool{}
+			}
+			if current != routesEpoch {
+				// Registration is resumable across ticks: if the 20s
+				// budget runs out mid-list, the routes already done stay
+				// in `registered` and the next tick continues with the
+				// remainder instead of restarting — or never reaching
+				// the tail routes for the life of the connection.
 				work, cancel := context.WithTimeout(ctx, 20*time.Second)
-				routeErr := s.registerKnownCatchupRoutes(work, r)
+				routeErr := s.registerKnownCatchupRoutes(work, r, registered)
 				cancel()
 				if routeErr != nil {
 					if ctx.Err() != nil {
@@ -574,8 +584,9 @@ func catchupLoop(ctx context.Context, s *Store, r *RESTClient, hub *WakeHub, g *
 					if !errors.Is(routeErr, context.DeadlineExceeded) {
 						return routeErr
 					}
+				} else {
+					routesEpoch = current
 				}
-
 			}
 			// Bounded scheduling quantum; another route gets its turn after each page.
 			for n := 0; n < 2; n++ {
@@ -647,7 +658,10 @@ func (s *Store) catchupObserveMutation(channel, guild, id string) error {
 
 // Seed route coverage, never history, from already known ledger conversations.
 // Every route still needs a fresh read proof and starts at the time of that proof.
-func (s *Store) registerKnownCatchupRoutes(ctx context.Context, r *RESTClient) error {
+// done tracks routes already attempted for the current connection epoch
+// (registered, or failed for a non-auth reason): the caller keeps it across
+// budget-expired attempts so registration resumes instead of restarting.
+func (s *Store) registerKnownCatchupRoutes(ctx context.Context, r *RESTClient, done map[string]bool) error {
 	v, err := s.call(func(db *storeConn) (any, error) {
 		enabled, e := catchupEnabledDB(db)
 		if e != nil || !enabled {
@@ -672,6 +686,9 @@ func (s *Store) registerKnownCatchupRoutes(ctx context.Context, r *RESTClient) e
 		return err
 	}
 	for _, id := range v.([]string) {
+		if done[id] {
+			continue
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -680,6 +697,8 @@ func (s *Store) registerKnownCatchupRoutes(ctx context.Context, r *RESTClient) e
 			if e.Error() == "preflight_http_401" {
 				return errors.New("authentication_failed")
 			}
+			// Attempted for this epoch; a later epoch retries it.
+			done[id] = true
 			continue
 		}
 		_, e = s.call(func(db *storeConn) (any, error) {
@@ -688,6 +707,7 @@ func (s *Store) registerKnownCatchupRoutes(ctx context.Context, r *RESTClient) e
 		if e != nil {
 			return e
 		}
+		done[id] = true
 	}
 	return nil
 }

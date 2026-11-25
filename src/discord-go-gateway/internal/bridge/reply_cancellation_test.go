@@ -177,3 +177,118 @@ func TestCancelReplyRacesDispatcherAtomically(t *testing.T) {
 		s.Close()
 	}
 }
+
+// A failed head blocks its conversation until resolved (by design), but
+// the expiry sweep must release it once it is stale, with the failed
+// chunk preserved as evidence — the 2026-11-25 boost incident wedged
+// #일반 for ~10 hours because nothing bounded the wait.
+func TestExpireBlockedFailedRepliesReleasesConversation(t *testing.T) {
+	s, _ := testStore(t)
+	ingestLedger(t, s, "one", "same")
+	first := replyLedger(t, s, claimLedger(t, s), "first answer")
+	ingestLedger(t, s, "two", "same")
+	second := replyLedger(t, s, claimLedger(t, s), "second answer")
+	chunk, err := s.NextChunk()
+	if err != nil || chunk == nil || chunk.ReplyID != first {
+		t.Fatal(chunk, err)
+	}
+	if err = s.RecordResult(*chunk, SendResult{State: "failed", Code: "http_400"}); err != nil {
+		t.Fatal(err)
+	}
+	if next, err := s.NextChunk(); err != nil || next != nil {
+		t.Fatal("failed head must block until resolved", next, err)
+	}
+	status, err := s.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue, _ := status["queue"].(map[string]any)
+	if queue["blocked_conversations"] != 1 || queue["uncertain_blocked_conversations"] != 0 {
+		t.Fatal("status hides the blockage", status["queue"])
+	}
+	// Not yet stale: a generous maxAge leaves the head for the operator.
+	if n, err := s.ExpireBlockedFailedReplies(3600); err != nil || n != 0 {
+		t.Fatal("fresh failure expired early", n, err)
+	}
+	if next, err := s.NextChunk(); err != nil || next != nil {
+		t.Fatal("fresh failure must still block", next, err)
+	}
+	// Stale: the sweep cancels it like an operator would.
+	if n, err := s.ExpireBlockedFailedReplies(0); err != nil || n != 1 {
+		t.Fatal("stale failure not expired", n, err)
+	}
+	d, err := s.Delivery(first)
+	if err != nil || d.State != "cancelled" || d.Cancellation == nil || d.Cancellation.Code != "failed_head_expired" {
+		t.Fatal("expiry is not a durable cancellation", d, err)
+	}
+	if d.Chunks[0].State != "failed" {
+		t.Fatal("failed evidence was rewritten", d.Chunks[0])
+	}
+	next, err := s.NextChunk()
+	if err != nil || next == nil || next.ReplyID != second {
+		t.Fatal("conversation still wedged after expiry", next, err)
+	}
+	status, err = s.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue, _ = status["queue"].(map[string]any)
+	if queue["blocked_conversations"] != 0 {
+		t.Fatal("status still reports the released blockage", status["queue"])
+	}
+}
+
+// The sweep must not touch a failed reply that blocks nothing (an
+// operator may still retry it), nor any reply with an uncertain chunk
+// (that POST may have been delivered).
+func TestExpireBlockedFailedRepliesLeavesUnblockedAndUncertain(t *testing.T) {
+	s, _ := testStore(t)
+	ingestLedger(t, s, "one", "same")
+	lonely := replyLedger(t, s, claimLedger(t, s), "lonely answer")
+	chunk, err := s.NextChunk()
+	if err != nil || chunk == nil || chunk.ReplyID != lonely {
+		t.Fatal(chunk, err)
+	}
+	if err = s.RecordResult(*chunk, SendResult{State: "failed", Code: "http_400"}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.ExpireBlockedFailedReplies(0); err != nil || n != 0 {
+		t.Fatal("unblocking failure was expired", n, err)
+	}
+	if n, err := s.RetryFailed(lonely); err != nil || n != 1 {
+		t.Fatal("operator retry lost", n, err)
+	}
+	chunk, err = s.NextChunk()
+	if err != nil || chunk == nil {
+		t.Fatal(chunk, err)
+	}
+	if err = s.RecordResult(*chunk, SendResult{State: "sent", MessageID: "remote"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ingestLedger(t, s, "two", "same")
+	uncertain := replyLedger(t, s, claimLedger(t, s), "maybe sent")
+	ingestLedger(t, s, "three", "same")
+	replyLedger(t, s, claimLedger(t, s), "waiting answer")
+	chunk, err = s.NextChunk()
+	if err != nil || chunk == nil || chunk.ReplyID != uncertain {
+		t.Fatal(chunk, err)
+	}
+	if err = s.RecordResult(*chunk, SendResult{State: "uncertain", Code: "request_or_ack_failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.ExpireBlockedFailedReplies(0); err != nil || n != 0 {
+		t.Fatal("uncertain head was expired", n, err)
+	}
+	if next, err := s.NextChunk(); err != nil || next != nil {
+		t.Fatal("uncertain head must keep blocking", next, err)
+	}
+	status, err := s.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue, _ := status["queue"].(map[string]any)
+	if queue["blocked_conversations"] != 1 || queue["uncertain_blocked_conversations"] != 1 {
+		t.Fatal("status hides the uncertain blockage", status["queue"])
+	}
+}

@@ -80,6 +80,8 @@ func (g *gatewayState) health(r *RESTClient) map[string]any {
 			warnings["owner_route_lookup_failed"] = count
 		case "route_validation_failed":
 			warnings["owner_route_validation_failed"] = count
+		case "control_capacity_dropped":
+			warnings["control_capacity_dropped"] = count
 		}
 	}
 	if g.guildFailure != "" {
@@ -294,6 +296,10 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 			controlWG.Add(1)
 			go func() { defer controlWG.Done(); defer func() { <-controlSlots }(); fn() }()
 		default:
+			// Saturated control plane: drop, but count it — a silent
+			// drop is indistinguishable from a lost interaction, and
+			// killing the gateway over it is worse (see reactions).
+			g.recordIngress("control_capacity_dropped")
 		}
 	}
 	defer func() { cancel(); controlWG.Wait() }()
@@ -328,7 +334,7 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 			select {
 			case reactions <- reactionInput{m.MessageReaction, true}:
 			default:
-				fail("gateway_control_capacity_exceeded")
+				g.recordIngress("control_capacity_dropped")
 			}
 		}
 	})
@@ -337,7 +343,7 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 			select {
 			case reactions <- reactionInput{m.MessageReaction, false}:
 			default:
-				fail("gateway_control_capacity_exceeded")
+				g.recordIngress("control_capacity_dropped")
 			}
 		}
 	})
@@ -363,9 +369,12 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 	s.AddHandler(func(_ *discordgo.Session, _ *discordgo.Disconnect) {
 		g.disconnect()
 		if !settings.KeepCatchupDisarmed {
-			if err := store.MarkCatchupGaps(time.Now(), "disconnected"); err != nil {
-				fail("catchup_persistence_failed")
-			}
+			// Off the synchronous event path: a backed-up store must
+			// not stall event dispatch, and a marking failure must not
+			// escalate a routine disconnect into a process exit — the
+			// catchup loop re-marks gaps on reconnect with a wider
+			// window, so a lost marking here loses no history.
+			go func() { _ = store.MarkCatchupGaps(time.Now(), "disconnected") }()
 		}
 		hub.Notify()
 		select {
@@ -543,6 +552,11 @@ func RunGateway(parent context.Context, settings Settings, store *Store) (retErr
 	start(func() {
 		if err := autoGreetLoop(ctx, store, hub, settings); err != nil {
 			fail("gateway_autogreet_failed")
+		}
+	})
+	startGatewayWriter(settings.ReceiveOnly, start, func() {
+		if err := queueExpiryLoop(ctx, store); err != nil {
+			fail("queue_expiry_failed")
 		}
 	})
 	start(func() {
@@ -777,12 +791,25 @@ func isBoostMessageType(t discordgo.MessageType) bool {
 		t == discordgo.MessageTypeUserPremiumGuildSubscriptionTierThree
 }
 
-func receiveMessage(ctx context.Context, rest *RESTClient, store *Store, s Settings, m *discordgo.Message) (string, error) {
-	authorOK := m != nil && m.Author != nil && (m.Author.ID == s.Policy.OwnerID || s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID)
-	typeOK := m != nil && (m.Type == discordgo.MessageTypeDefault || m.Type == discordgo.MessageTypeReply ||
+// liveMessageAdmissible is the message-level admission shared by the
+// live receive path and history catchup: the owner anywhere, any human
+// author on the extra guild route, plus the extra guild's join (home
+// channel only) and boost system messages. The two paths must never
+// drift apart — a message the live path would stage but catchup skips
+// is lost permanently once the catchup floor passes it.
+func liveMessageAdmissible(s Settings, m *discordgo.Message) bool {
+	if m == nil || m.Author == nil {
+		return false
+	}
+	authorOK := m.Author.ID == s.Policy.OwnerID || s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID
+	typeOK := m.Type == discordgo.MessageTypeDefault || m.Type == discordgo.MessageTypeReply ||
 		m.Type == discordgo.MessageTypeGuildMemberJoin && s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID && m.ChannelID == s.Policy.ExtraGuildChannelID ||
-		isBoostMessageType(m.Type) && s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID)
-	if m == nil || m.Author == nil || !authorOK || m.Author.Bot || m.WebhookID != "" || !typeOK || (m.GuildID != "" && m.GuildID != s.Policy.GuildID && m.GuildID != s.Policy.ExtraGuildID) {
+		isBoostMessageType(m.Type) && s.Policy.ExtraGuildID != "" && m.GuildID == s.Policy.ExtraGuildID
+	return authorOK && !m.Author.Bot && m.WebhookID == "" && typeOK && (m.GuildID == "" || m.GuildID == s.Policy.GuildID || m.GuildID == s.Policy.ExtraGuildID)
+}
+
+func receiveMessage(ctx context.Context, rest *RESTClient, store *Store, s Settings, m *discordgo.Message) (string, error) {
+	if !liveMessageAdmissible(s, m) {
 		return "rejected", nil
 	}
 	event := projectGatewayMessage(s, m)
@@ -831,6 +858,25 @@ func projectGatewayMessage(s Settings, m *discordgo.Message) Envelope {
 		event.ReplyToEventID = m.MessageReference.MessageID
 	}
 	return event
+}
+
+// queueExpiryLoop bounds how long a failed reply head can wedge its
+// conversation: every minute it expires failed heads that have blocked
+// pending work for longer than FailedHeadExpirySeconds. Uncertain heads
+// are never expired (see Store.ExpireBlockedFailedReplies).
+func queueExpiryLoop(ctx context.Context, store *Store) error {
+	tick := time.NewTicker(time.Minute)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-tick.C:
+			if _, err := store.ExpireBlockedFailedReplies(FailedHeadExpirySeconds); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 // Drain immediately after each acknowledgement. A maintenance timer only covers
@@ -994,8 +1040,14 @@ func autoGreetLoop(ctx context.Context, store *Store, hub *WakeHub, settings Set
 				}
 				if greeted {
 					hub.Notify()
+					continue
 				}
-				continue
+				// Pending keeps offering this envelope but the auto
+				// reply refuses it (source refreshing, already claimed
+				// elsewhere, ...). Spinning on it would saturate the
+				// shared store channel until it ages out; wait for the
+				// next wake instead — it stays eligible until then.
+				break
 			}
 			g, err := store.PendingAutoGreeting(120)
 			if err != nil {
@@ -1012,7 +1064,9 @@ func autoGreetLoop(ctx context.Context, store *Store, hub *WakeHub, settings Set
 			}
 			if answered {
 				hub.Notify()
+				continue
 			}
+			break
 		}
 		select {
 		case <-ctx.Done():
@@ -1045,6 +1099,34 @@ func feedbackLoop(ctx context.Context, store *Store, rest *RESTClient, hub *Wake
 				return e
 			}
 			if e == nil {
+				// Prune retry state for inbounds that left the feedback
+				// set (delivered, ignored, cleaned up): without this the
+				// maps grow for the whole connection epoch.
+				live := make(map[string]bool, len(rows))
+				for _, r := range rows {
+					live[r.ID] = true
+				}
+				for _, m := range []map[string]time.Time{retry} {
+					for k := range m {
+						if id, _, _ := strings.Cut(k, ":"); !live[id] {
+							delete(m, k)
+						}
+					}
+				}
+				for _, m := range []map[string]int{attempt} {
+					for k := range m {
+						if id, _, _ := strings.Cut(k, ":"); !live[id] {
+							delete(m, k)
+						}
+					}
+				}
+				for _, m := range []map[string]bool{blocked} {
+					for k := range m {
+						if id, _, _ := strings.Cut(k, ":"); !live[id] {
+							delete(m, k)
+						}
+					}
+				}
 				for _, r := range rows {
 					target := "received"
 					if r.Delivery == "sent" || r.Delivery == "failed" || r.Delivery == "uncertain" {

@@ -49,7 +49,15 @@ func (s *Store) ingestControl(e Envelope, interactionID string) (string, error) 
 			if err != nil {
 				return nil, err
 			}
-			if n >= 1000 {
+			capacity := 1000
+			enabled, err := catchupEnabledDB(db)
+			if err != nil {
+				return nil, err
+			}
+			if enabled {
+				capacity = catchupLiveCapacity
+			}
+			if n >= capacity {
 				return nil, errors.New("queue_full")
 			}
 			c, _ := e.ControlEvent()
