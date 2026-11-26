@@ -313,6 +313,91 @@ func TestReplyOutputAckMismatchIsUncertain(t *testing.T) {
 		})
 	}
 }
+// foldedACK mimics Discord's folded shape: the uploaded file is absent from
+// attachments and appears only as the embed image's CDN URL.
+func foldedACK(c Chunk, fileID, channelID string) map[string]any {
+	ack := ackFor(c)
+	out, _ := decodeReplyOutput(c.Output)
+	f := out.Attachments[0]
+	ack["attachments"] = []map[string]any{}
+	ack["embeds"] = []map[string]any{{"type": "rich", "image": map[string]any{"url": "https://cdn.discordapp.com/attachments/" + channelID + "/" + fileID + "/" + f.Filename + "?ex=refresh", "content_type": f.ContentType, "description": f.Description}}}
+	return ack
+}
+
+func TestReplyOutputAckFoldedAttachmentAccepted(t *testing.T) {
+	s, path, cl, dir := outputFixture(t)
+	if e := os.WriteFile(filepath.Join(dir, "answer.png"), tinyReplyPNG(t), 0600); e != nil {
+		t.Fatal(e)
+	}
+	_, c := queueOutput(t, s, cl, ReplyManifest{Version: 1, Text: "An authored answer", Attachments: []ReplyFile{{Path: "answer.png", Description: "One pixel"}}, Embeds: []ReplyEmbed{{Image: &ReplyEmbedImage{URL: "attachment://answer.png"}}}})
+	ack := foldedACK(*c, "800", "2")
+	r := localREST(t, func(w http.ResponseWriter, req *http.Request) {
+		if preflightHandler(w, req) {
+			return
+		}
+		json.NewEncoder(w).Encode(ack)
+	})
+	r.settings.DBPath = path
+	got := r.Send(context.Background(), *c)
+	if got.State != "sent" || got.MessageID != "9" {
+		t.Fatal(got)
+	}
+	var files []replyReceiptFile
+	if e := json.Unmarshal([]byte(got.OutputReceipt), &files); e != nil || len(files) != 1 || files[0].ID != "800" || files[0].Filename != "answer.png" || files[0].Size != int64(len(tinyReplyPNG(t))) || files[0].ContentType != "image/png" || files[0].Description != "One pixel" {
+		t.Fatal(got.OutputReceipt, e)
+	}
+}
+
+func TestReplyOutputAckFoldedAttachmentWrongChannelStillUncertain(t *testing.T) {
+	s, path, cl, dir := outputFixture(t)
+	if e := os.WriteFile(filepath.Join(dir, "answer.png"), tinyReplyPNG(t), 0600); e != nil {
+		t.Fatal(e)
+	}
+	_, c := queueOutput(t, s, cl, ReplyManifest{Version: 1, Text: "An authored answer", Attachments: []ReplyFile{{Path: "answer.png", Description: "One pixel"}}, Embeds: []ReplyEmbed{{Image: &ReplyEmbedImage{URL: "attachment://answer.png"}}}})
+	ack := foldedACK(*c, "800", "7")
+	r := localREST(t, func(w http.ResponseWriter, req *http.Request) {
+		if preflightHandler(w, req) {
+			return
+		}
+		json.NewEncoder(w).Encode(ack)
+	})
+	r.settings.DBPath = path
+	if got := r.Send(context.Background(), *c); got.State != "uncertain" {
+		t.Fatal(got)
+	}
+}
+
+func TestRichReplyReconcilesFoldedReadback(t *testing.T) {
+	s, path, cl, dir := outputFixture(t)
+	if e := os.WriteFile(filepath.Join(dir, "answer.png"), tinyReplyPNG(t), 0600); e != nil {
+		t.Fatal(e)
+	}
+	id, c := queueOutput(t, s, cl, ReplyManifest{Version: 1, Text: "An authored answer", Attachments: []ReplyFile{{Path: "answer.png", Description: "One pixel"}}, Embeds: []ReplyEmbed{{Image: &ReplyEmbedImage{URL: "attachment://answer.png"}}}})
+	if e := s.RecordResult(*c, SendResult{State: "uncertain", Code: "invalid_ack"}); e != nil {
+		t.Fatal(e)
+	}
+	ack := foldedACK(*c, "800", "2")
+	var posts atomic.Int32
+	r := localREST(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != "GET" {
+			posts.Add(1)
+		}
+		if preflightHandler(w, req) {
+			return
+		}
+		json.NewEncoder(w).Encode(ack)
+	})
+	r.settings.DBPath = path
+	result, e := r.ReconcileReply(context.Background(), s, id, 0, "9")
+	if e != nil || result.State != "sent" || result.OutputReceipt == "" || posts.Load() != 0 {
+		t.Fatal(result, e, posts.Load())
+	}
+	d, e := s.Delivery(id)
+	if e != nil || d.State != "sent" || d.Chunks[0].OutputReceipt == "" {
+		t.Fatal(d, e)
+	}
+}
+
 func TestMultipartFailureAndLostACKNeverReplay(t *testing.T) {
 	for _, status := range []int{0, 429, 500, 307} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {

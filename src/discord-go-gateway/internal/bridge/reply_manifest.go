@@ -685,6 +685,81 @@ func buildReplyBodyWithPayload(c Chunk, stateDir string, p []byte) ([]byte, stri
 	return b.Bytes(), w.FormDataContentType(), nil
 }
 
+type foldedReplyFile struct {
+	ID          string
+	ContentType string
+	Description string
+}
+
+// foldedReplyFiles returns Discord-issued identities for expected attachments
+// that an ACK carries only as embed image/thumbnail CDN URLs, with no entry
+// in the attachments array. Discord folds an upload into its embed when the
+// embed references it via attachment:// (observed 2026-11-27: the message
+// rendered the image in-channel and the CDN object served the exact staged
+// bytes, yet attachments was empty, so a fully delivered reply was marked
+// uncertain). Only URLs the authored output itself declared qualify: same
+// embed slot, same filename, this conversation's channel, a snowflake file
+// ID, and a Discord CDN host.
+func foldedReplyFiles(a map[string]json.RawMessage, c Chunk, out replyOutput) map[string]foldedReplyFile {
+	folded := map[string]foldedReplyFile{}
+	var embeds []json.RawMessage
+	if raw, ok := a["embeds"]; ok {
+		if json.Unmarshal(raw, &embeds) != nil {
+			return folded
+		}
+	}
+	type embedMedia struct {
+		URL         string `json:"url"`
+		ContentType string `json:"content_type"`
+		Description string `json:"description"`
+	}
+	expected := map[string]bool{}
+	for _, f := range out.Attachments {
+		expected[f.Filename] = true
+	}
+	consider := func(wantURL string, got *embedMedia) {
+		if got == nil || !strings.HasPrefix(wantURL, "attachment://") {
+			return
+		}
+		name := strings.TrimPrefix(wantURL, "attachment://")
+		if !expected[name] {
+			return
+		}
+		if _, exists := folded[name]; exists {
+			return
+		}
+		u, err := url.Parse(got.URL)
+		if err != nil || u.Scheme != "https" || u.User != nil || (u.Host != "cdn.discordapp.com" && u.Host != "media.discordapp.net") || filepath.Base(u.Path) != name {
+			return
+		}
+		pieces := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(pieces) != 4 || pieces[0] != "attachments" || pieces[1] != c.Source.ConversationID || !Snowflake(pieces[2]) {
+			return
+		}
+		folded[name] = foldedReplyFile{ID: pieces[2], ContentType: got.ContentType, Description: got.Description}
+	}
+	for i, raw := range embeds {
+		if i >= len(out.Embeds) {
+			break
+		}
+		var got struct {
+			Image     *embedMedia `json:"image"`
+			Thumbnail *embedMedia `json:"thumbnail"`
+		}
+		if json.Unmarshal(raw, &got) != nil {
+			continue
+		}
+		want := out.Embeds[i]
+		if want.Image != nil {
+			consider(want.Image.URL, got.Image)
+		}
+		if want.Thumbnail != nil {
+			consider(want.Thumbnail.URL, got.Thumbnail)
+		}
+	}
+	return folded
+}
+
 // ValidateReplyOutputAck validates the complete requested output contract, not
 // just message text. Attachment CDN URLs may be refreshed; URL equality is never
 // a proof of file identity. Discord's returned snowflakes, filename, MIME, size,
@@ -709,9 +784,6 @@ func ValidateReplyOutputAck(a map[string]json.RawMessage, c Chunk) error {
 			return errors.New("invalid_output_ack")
 		}
 	}
-	if len(attached) != len(out.Attachments) {
-		return errors.New("invalid_output_ack")
-	}
 	ids := map[string]bool{}
 	gotNames := map[string]bool{}
 	fileIDs := map[string]string{}
@@ -728,6 +800,27 @@ func ValidateReplyOutputAck(a map[string]json.RawMessage, c Chunk) error {
 		ids[got.ID] = true
 		gotNames[got.Filename] = true
 		fileIDs[got.Filename] = got.ID
+	}
+	// An expected file missing from attachments may still be delivered:
+	// Discord can fold it into the embed that references it (see
+	// foldedReplyFiles). The Discord-issued file ID from the embed's CDN
+	// URL then completes the accounting; every expected file must be
+	// accounted for exactly once across both shapes.
+	folded := foldedReplyFiles(a, c, out)
+	for _, want := range out.Attachments {
+		if gotNames[want.Filename] {
+			continue
+		}
+		f, ok := folded[want.Filename]
+		if !ok || ids[f.ID] {
+			return errors.New("invalid_output_ack")
+		}
+		ids[f.ID] = true
+		gotNames[want.Filename] = true
+		fileIDs[want.Filename] = f.ID
+	}
+	if len(gotNames) != len(out.Attachments) {
+		return errors.New("invalid_output_ack")
 	}
 	var embeds []json.RawMessage
 	if raw, ok := a["embeds"]; ok {

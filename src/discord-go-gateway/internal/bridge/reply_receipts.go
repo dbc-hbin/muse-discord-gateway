@@ -55,6 +55,40 @@ func replyAckReceipt(a map[string]json.RawMessage, c Chunk) ReplyOutputReceipt {
 		files[i].ContentType, _, _ = mime.ParseMediaType(files[i].ContentType)
 		files[i].ContentType = canonicalReplyMediaType(files[i].ContentType)
 	}
+	// Files Discord folded into an embed (see foldedReplyFiles) have no
+	// attachments entry; record their Discord-issued ID from the embed CDN
+	// URL so the receipt still covers every expected file and a later
+	// readback of the same message shape reproduces it exactly. Size is
+	// taken from the staged manifest: the message object carries no size
+	// for a folded file, and the staged bytes were hash-verified before
+	// upload.
+	if out, e := decodeReplyOutput(c.Output); e == nil && len(out.Attachments) > len(files) {
+		present := map[string]bool{}
+		for _, f := range files {
+			present[f.Filename] = true
+		}
+		folded := foldedReplyFiles(a, c, out)
+		for _, want := range out.Attachments {
+			if present[want.Filename] {
+				continue
+			}
+			f, ok := folded[want.Filename]
+			if !ok {
+				continue
+			}
+			contentType := want.ContentType
+			if f.ContentType != "" {
+				if parsed, _, err := mime.ParseMediaType(f.ContentType); err == nil {
+					contentType = canonicalReplyMediaType(parsed)
+				}
+			}
+			description := f.Description
+			if description == "" {
+				description = want.Description
+			}
+			files = append(files, replyReceiptFile{ID: f.ID, Filename: want.Filename, Size: want.Size, ContentType: contentType, Description: description})
+		}
+	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Filename < files[j].Filename })
 	b, _ := json.Marshal(files)
 	return ReplyOutputReceipt(b)
